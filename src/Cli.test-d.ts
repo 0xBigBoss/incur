@@ -82,3 +82,48 @@ test('cta callback receives typed result from output', () => {
     },
   })
 })
+
+test('Cta falls back to plain strings when commands map is empty', () => {
+  type Cta = Cli.Cta<{}>
+  expectTypeOf<Cta['command']>().toEqualTypeOf<string>()
+  expectTypeOf<Cta['args']>().toEqualTypeOf<Record<string, unknown> | undefined>()
+  expectTypeOf<Cta['options']>().toEqualTypeOf<Record<string, unknown> | undefined>()
+})
+
+test('Cta narrows command to registered keys', () => {
+  type Commands = {
+    get: { args: { id: number }; options: {} }
+    list: { args: {}; options: { limit: number } }
+  }
+  type Cta = Cli.Cta<Commands>
+
+  expectTypeOf<Cta>().toMatchTypeOf<{ command: 'get' } | { command: 'list' }>()
+
+  // args are narrowed per command
+  const getCta: Extract<Cta, { command: 'get' }> = { command: 'get', args: { id: 42 } }
+  expectTypeOf(getCta.args).toEqualTypeOf<{ id?: number | true } | undefined>()
+
+  // options are narrowed per command
+  const listCta: Extract<Cta, { command: 'list' }> = { command: 'list', options: { limit: 10 } }
+  expectTypeOf(listCta.options).toEqualTypeOf<{ limit?: number | true } | undefined>()
+})
+
+test('command() accumulates command types through chaining', () => {
+  const cli = Cli.create('test')
+    .command('get', {
+      args: z.object({ id: z.number() }),
+      options: z.object({ verbose: z.boolean().default(false) }),
+      run: ({ args }) => ({ id: args.id }),
+    })
+    .command('list', {
+      options: z.object({ limit: z.number().default(30) }),
+      run: () => ({ items: [] }),
+    })
+
+  type Commands = typeof cli extends Cli.Cli<infer C> ? C : never
+  expectTypeOf<Commands['get']>().toEqualTypeOf<{
+    args: { id: number }
+    options: { verbose: boolean }
+  }>()
+  expectTypeOf<Commands['list']>().toEqualTypeOf<{ args: {}; options: { limit: number } }>()
+})

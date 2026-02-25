@@ -1,6 +1,6 @@
 import { Cli, Errors, z } from 'clac'
 
-async function serve(cli: ReturnType<typeof Cli.create>, argv: string[]) {
+async function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
   let output = ''
   let exitCode: number | undefined
   await cli.serve(argv, {
@@ -322,17 +322,17 @@ describe('--llms', () => {
 
   test('nested commands appear with full path in manifest', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', {
-      description: 'List PRs',
-      options: z.object({ state: z.enum(['open', 'closed']).default('open') }),
-      run: () => ({ items: [] }),
-    })
-    pr.command('create', {
-      description: 'Create PR',
-      args: z.object({ title: z.string() }),
-      run: ({ args }) => ({ title: args.title }),
-    })
+    const pr = Cli.create('pr', { description: 'PR management' })
+      .command('list', {
+        description: 'List PRs',
+        options: z.object({ state: z.enum(['open', 'closed']).default('open') }),
+        run: () => ({ items: [] }),
+      })
+      .command('create', {
+        description: 'Create PR',
+        args: z.object({ title: z.string() }),
+        run: ({ args }) => ({ title: args.title }),
+      })
     cli.command(pr)
 
     const { output } = await serve(cli, ['--llms', '--format', 'json'])
@@ -344,12 +344,11 @@ describe('--llms', () => {
 
   test('deeply nested commands in manifest', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    const review = Cli.command('review', { description: 'Reviews' })
-    review.command('approve', {
+    const review = Cli.create('review', { description: 'Reviews' }).command('approve', {
       description: 'Approve a review',
       run: () => ({ approved: true }),
     })
+    const pr = Cli.create('pr', { description: 'PR management' })
     pr.command(review)
     cli.command(pr)
 
@@ -441,21 +440,22 @@ describe('--llms', () => {
 
 describe('subcommands', () => {
   test('creates a command group with name and description', () => {
-    const pr = Cli.command('pr', { description: 'PR management' })
+    const pr = Cli.create('pr', { description: 'PR management' })
     expect(pr.name).toBe('pr')
     expect(pr.description).toBe('PR management')
   })
 
   test('group registers sub-commands and is chainable', () => {
-    const pr = Cli.command('pr', { description: 'PR management' })
+    const pr = Cli.create('pr', { description: 'PR management' })
     const result = pr.command('list', { run: () => ({ count: 0 }) })
     expect(result).toBe(pr)
   })
 
   test('routes to sub-command', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', { run: () => ({ count: 0 }) })
+    const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
+      run: () => ({ count: 0 }),
+    })
     cli.command(pr)
 
     const { output } = await serve(cli, ['pr', 'list'])
@@ -464,8 +464,7 @@ describe('subcommands', () => {
 
   test('sub-command receives parsed args and options', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('get', {
+    const pr = Cli.create('pr', { description: 'PR management' }).command('get', {
       args: z.object({ id: z.string() }),
       options: z.object({ draft: z.boolean().default(false) }),
       run: ({ args, options }) => ({ id: args.id, draft: options.draft }),
@@ -481,8 +480,9 @@ describe('subcommands', () => {
 
   test('--verbose shows full command path in meta', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', { run: () => ({ count: 0 }) })
+    const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
+      run: () => ({ count: 0 }),
+    })
     cli.command(pr)
 
     const { output } = await serve(cli, ['pr', 'list', '--verbose'])
@@ -498,9 +498,10 @@ describe('subcommands', () => {
 
   test('routes to deeply nested sub-commands', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    const review = Cli.command('review', { description: 'Reviews' })
-    review.command('approve', { run: () => ({ approved: true }) })
+    const review = Cli.create('review', { description: 'Reviews' }).command('approve', {
+      run: () => ({ approved: true }),
+    })
+    const pr = Cli.create('pr', { description: 'PR management' })
     pr.command(review)
     cli.command(pr)
 
@@ -510,9 +511,10 @@ describe('subcommands', () => {
 
   test('nested group shows full path in verbose meta', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    const review = Cli.command('review', { description: 'Reviews' })
-    review.command('approve', { run: () => ({ approved: true }) })
+    const review = Cli.create('review', { description: 'Reviews' }).command('approve', {
+      run: () => ({ approved: true }),
+    })
+    const pr = Cli.create('pr', { description: 'PR management' })
     pr.command(review)
     cli.command(pr)
 
@@ -529,9 +531,9 @@ describe('subcommands', () => {
 
   test('unknown subcommand lists available commands', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', { run: () => ({}) })
-    pr.command('create', { run: () => ({}) })
+    const pr = Cli.create('pr', { description: 'PR management' })
+      .command('list', { run: () => ({}) })
+      .command('create', { run: () => ({}) })
     cli.command(pr)
 
     const { output, exitCode } = await serve(cli, ['pr', 'unknown'])
@@ -544,9 +546,9 @@ describe('subcommands', () => {
 
   test('group without subcommand lists available commands', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', { run: () => ({}) })
-    pr.command('create', { run: () => ({}) })
+    const pr = Cli.create('pr', { description: 'PR management' })
+      .command('list', { run: () => ({}) })
+      .command('create', { run: () => ({}) })
     cli.command(pr)
 
     const { output, exitCode } = await serve(cli, ['pr'])
@@ -559,9 +561,9 @@ describe('subcommands', () => {
 
   test('sub-commands from separate module can be mounted', async () => {
     function createPrCommands() {
-      const pr = Cli.command('pr', { description: 'PR management' })
-      pr.command('list', { run: () => ({ count: 0 }) })
-      return pr
+      return Cli.create('pr', { description: 'PR management' }).command('list', {
+        run: () => ({ count: 0 }),
+      })
     }
 
     const cli = Cli.create('test')
@@ -573,8 +575,7 @@ describe('subcommands', () => {
 
   test('error in sub-command wraps in error envelope', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('fail', {
+    const pr = Cli.create('pr', { description: 'PR management' }).command('fail', {
       run() {
         throw new Error('sub-boom')
       },
@@ -591,8 +592,9 @@ describe('subcommands', () => {
 
   test('group error respects --format json', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('list', { run: () => ({}) })
+    const pr = Cli.create('pr', { description: 'PR management' }).command('list', {
+      run: () => ({}),
+    })
     cli.command(pr)
 
     const { output, exitCode } = await serve(cli, ['pr', 'unknown', '--format', 'json'])
@@ -645,16 +647,12 @@ describe('cta', () => {
       args: z.object({ name: z.string() }),
       output: z.object({ id: z.number(), name: z.string() }),
       run: ({ args }) => ({ id: 1, name: args.name }),
-      cta: (result) => [
-        { command: 'get', description: 'View the item', args: { id: result.id } },
-      ],
+      cta: (result) => [{ command: 'get', description: 'View the item', args: { id: result.id } }],
     })
 
     const { output } = await serve(cli, ['create', 'foo', '--verbose', '--format', 'json'])
     const parsed = JSON.parse(output)
-    expect(parsed.meta.cta).toEqual([
-      { command: 'test get 1', description: 'View the item' },
-    ])
+    expect(parsed.meta.cta).toEqual([{ command: 'test get 1', description: 'View the item' }])
   })
 
   test('cta options are formatted as --key value flags', async () => {
@@ -664,15 +662,32 @@ describe('cta', () => {
       output: z.object({ id: z.number(), name: z.string() }),
       run: ({ args }) => ({ id: 1, name: args.name }),
       cta: (result) => [
-        { command: `get ${result.id}`, description: 'View the item', options: { verbose: true } },
+        {
+          command: 'get',
+          description: 'View the item',
+          args: { id: result.id },
+          options: { limit: 10 },
+        },
       ],
     })
 
     const { output } = await serve(cli, ['create', 'foo', '--verbose', '--format', 'json'])
     const parsed = JSON.parse(output)
     expect(parsed.meta.cta).toEqual([
-      { command: 'test get 1 --verbose true', description: 'View the item' },
+      { command: 'test get 1 --limit 10', description: 'View the item' },
     ])
+  })
+
+  test('cta boolean args format as placeholders', async () => {
+    const cli = Cli.create('test')
+    cli.command('list', {
+      run: () => ({ items: [] }),
+      cta: () => [{ command: 'get', args: { id: true }, options: { format: true } }],
+    })
+
+    const { output } = await serve(cli, ['list', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toEqual([{ command: 'test get <id> --format <format>' }])
   })
 
   test('command without cta omits meta.cta', async () => {
@@ -699,7 +714,9 @@ describe('cta', () => {
   test('error envelope does not include cta', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {
-      run() { throw new Error('boom') },
+      run() {
+        throw new Error('boom')
+      },
       cta: () => [{ command: 'retry' }],
     })
 
@@ -711,21 +728,117 @@ describe('cta', () => {
 
   test('cta works with sub-commands', async () => {
     const cli = Cli.create('test')
-    const pr = Cli.command('pr', { description: 'PR management' })
-    pr.command('create', {
+    const pr = Cli.create('pr', { description: 'PR management' }).command('create', {
       args: z.object({ title: z.string() }),
       output: z.object({ id: z.number(), title: z.string() }),
       run: ({ args }) => ({ id: 42, title: args.title }),
-      cta: (result) => [
-        { command: `pr get ${result.id}`, description: 'View the PR' },
-      ],
+      cta: (result) => [{ command: `pr get ${result.id}`, description: 'View the PR' }],
     })
     cli.command(pr)
 
     const { output } = await serve(cli, ['pr', 'create', 'my-pr', '--verbose', '--format', 'json'])
     const parsed = JSON.parse(output)
-    expect(parsed.meta.cta).toEqual([
-      { command: 'test pr get 42', description: 'View the PR' },
-    ])
+    expect(parsed.meta.cta).toEqual([{ command: 'test pr get 42', description: 'View the PR' }])
+  })
+})
+
+describe('leaf cli', () => {
+  test('create with run returns a leaf cli (no command method)', () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    expect(cli.name).toBe('ping')
+    expect('command' in cli).toBe(false)
+  })
+
+  test('serves without a command name in argv', async () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, [])
+    expect(output).toMatchInlineSnapshot(`"pong: true"`)
+  })
+
+  test('parses args and options', async () => {
+    const cli = Cli.create('greet', {
+      args: z.object({ name: z.string() }),
+      options: z.object({ loud: z.boolean().default(false) }),
+      run({ args, options }) {
+        return { message: options.loud ? `HELLO ${args.name}` : `hello ${args.name}` }
+      },
+    })
+    const { output } = await serve(cli, ['world', '--loud'])
+    expect(output).toMatchInlineSnapshot(`"message: HELLO world"`)
+  })
+
+  test('--verbose outputs full envelope', async () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['--verbose'])
+    expect(output).toMatchInlineSnapshot(`
+      "ok: true
+      data:
+        pong: true
+      meta:
+        command: ping
+        duration: <stripped>"
+    `)
+  })
+
+  test('--format json works', async () => {
+    const cli = Cli.create('ping', { run: () => ({ pong: true }) })
+    const { output } = await serve(cli, ['--format', 'json'])
+    expect(JSON.parse(output)).toEqual({ pong: true })
+  })
+
+  test('errors wrap in error envelope', async () => {
+    const cli = Cli.create('fail', {
+      run() {
+        throw new Error('boom')
+      },
+    })
+    const { output, exitCode } = await serve(cli, [])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: UNKNOWN
+      message: boom"
+    `)
+  })
+
+  test('can be mounted on a parent as a single command', async () => {
+    const ping = Cli.create('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+    })
+    const cli = Cli.create('app')
+    cli.command(ping)
+
+    const { output } = await serve(cli, ['ping'])
+    expect(output).toMatchInlineSnapshot(`"pong: true"`)
+  })
+
+  test('mounted leaf with args/options works', async () => {
+    const greet = Cli.create('greet', {
+      args: z.object({ name: z.string() }),
+      options: z.object({ loud: z.boolean().default(false) }),
+      run({ args, options }) {
+        return { message: options.loud ? `HELLO ${args.name}` : `hello ${args.name}` }
+      },
+    })
+    const cli = Cli.create('app')
+    cli.command(greet)
+
+    const { output } = await serve(cli, ['greet', 'world', '--loud'])
+    expect(output).toMatchInlineSnapshot(`"message: HELLO world"`)
+  })
+
+  test('mounted leaf appears in --llms manifest', async () => {
+    const ping = Cli.create('ping', {
+      description: 'Health check',
+      run: () => ({ pong: true }),
+    })
+    const cli = Cli.create('app')
+    cli.command(ping)
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands).toHaveLength(1)
+    expect(manifest.commands[0].name).toBe('ping')
+    expect(manifest.commands[0].description).toBe('Health check')
   })
 })

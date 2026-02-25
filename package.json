@@ -4,7 +4,8 @@
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
     "changeset:version": "changeset version",
     "check": "biome check --fix --unsafe",
-    "check:types": "tsc",
+    "check:types": "tsc -b && pnpm -r check:types",
+    "clac": "node --import tsx src/bin.ts",
     "dev": "zile dev",
     "test": "vitest"
   },
@@ -12,6 +13,7 @@
     "@biomejs/biome": "latest",
     "@changesets/cli": "latest",
     "@types/node": "latest",
+    "tsx": "^4.21.0",
     "typescript": "latest",
     "vitest": "latest",
     "zile": "latest"
@@ -40,6 +42,11 @@
       "types": "./dist/index.d.ts",
       "src": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./Register": {
+      "types": "./dist/Register.d.ts",
+      "src": "./src/Register.ts",
+      "default": "./dist/Register.js"
     }
   }
 }

@@ -8,9 +8,18 @@ export default defineConfig({
     },
     globals: true,
     passWithNoTests: true,
-    typecheck: {
-      enabled: true,
-      include: ['**/*.test-d.ts'],
-    },
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'core',
+          include: ['src/**/*.test.ts'],
+          typecheck: {
+            enabled: true,
+            include: ['src/**/*.test-d.ts'],
+          },
+        },
+      },
+    ],
   },
 })

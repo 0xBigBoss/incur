@@ -1,0 +1,23 @@
+import path from 'node:path'
+import { z } from 'zod'
+import * as Cli from './Cli.js'
+import * as Codegen from './Codegen.js'
+
+Cli.create('clac')
+  .command('gen', {
+    description: 'Generate type definitions for development.',
+    options: z.object({
+      dir: z.string().optional().describe('Project root directory'),
+      entry: z.string().optional().describe('Entrypoint path (absolute)'),
+      output: z.string().optional().describe('Output path (absolute)'),
+    }),
+    async run({ options }) {
+      const dir = options.dir ?? '.'
+      const entry = options.entry ?? dir
+      const output = options.output ?? path.join(dir, 'clac.generated.ts')
+      await Codegen.generate(entry, output)
+      return { dir, entry, output }
+    },
+  })
+  .serve()
+

@@ -1,0 +1,11 @@
+{
+  "name": "gh",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:types": "tsc"
+  },
+  "dependencies": {
+    "clac": "workspace:*"
+  }
+}
