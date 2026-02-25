@@ -71,12 +71,12 @@ test('alias keys are constrained to option keys', () => {
   })
 })
 
-test('next callback receives typed result from output', () => {
+test('cta callback receives typed result from output', () => {
   const cli = Cli.create('test')
   cli.command('list', {
     output: z.object({ items: z.array(z.string()) }),
     run: () => ({ items: ['a', 'b'] }),
-    next(result) {
+    cta(result) {
       expectTypeOf(result).toEqualTypeOf<{ items: string[] }>()
       return []
     },

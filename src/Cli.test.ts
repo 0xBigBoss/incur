@@ -602,3 +602,130 @@ describe('subcommands', () => {
     expect(parsed.message).toContain('unknown')
   })
 })
+
+describe('cta', () => {
+  test('cta populates meta.cta in verbose output', async () => {
+    const cli = Cli.create('test')
+    cli.command('list', {
+      run: () => ({ items: ['a', 'b'] }),
+      cta: () => [{ command: 'get', description: 'Get item a', args: { item: 'a' } }],
+    })
+
+    const { output } = await serve(cli, ['list', '--verbose'])
+    expect(output).toMatchInlineSnapshot(`
+      "ok: true
+      data:
+        items[2]: a,b
+      meta:
+        command: list
+        duration: <stripped>
+        cta[1]{command,description}:
+          test get a,Get item a"
+    `)
+  })
+
+  test('cta receives the run return value', async () => {
+    const cli = Cli.create('test')
+    let received: unknown
+    cli.command('list', {
+      run: () => ({ items: ['x', 'y'] }),
+      cta(result) {
+        received = result
+        return []
+      },
+    })
+
+    await serve(cli, ['list'])
+    expect(received).toEqual({ items: ['x', 'y'] })
+  })
+
+  test('cta args are formatted as positional values', async () => {
+    const cli = Cli.create('test')
+    cli.command('create', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ id: z.number(), name: z.string() }),
+      run: ({ args }) => ({ id: 1, name: args.name }),
+      cta: (result) => [
+        { command: 'get', description: 'View the item', args: { id: result.id } },
+      ],
+    })
+
+    const { output } = await serve(cli, ['create', 'foo', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toEqual([
+      { command: 'test get 1', description: 'View the item' },
+    ])
+  })
+
+  test('cta options are formatted as --key value flags', async () => {
+    const cli = Cli.create('test')
+    cli.command('create', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ id: z.number(), name: z.string() }),
+      run: ({ args }) => ({ id: 1, name: args.name }),
+      cta: (result) => [
+        { command: `get ${result.id}`, description: 'View the item', options: { verbose: true } },
+      ],
+    })
+
+    const { output } = await serve(cli, ['create', 'foo', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toEqual([
+      { command: 'test get 1 --verbose true', description: 'View the item' },
+    ])
+  })
+
+  test('command without cta omits meta.cta', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toBeUndefined()
+  })
+
+  test('cta returning empty array results in empty meta.cta', async () => {
+    const cli = Cli.create('test')
+    cli.command('noop', {
+      run: () => ({ done: true }),
+      cta: () => [],
+    })
+
+    const { output } = await serve(cli, ['noop', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toEqual([])
+  })
+
+  test('error envelope does not include cta', async () => {
+    const cli = Cli.create('test')
+    cli.command('fail', {
+      run() { throw new Error('boom') },
+      cta: () => [{ command: 'retry' }],
+    })
+
+    const { output } = await serve(cli, ['fail', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.ok).toBe(false)
+    expect(parsed.meta.cta).toBeUndefined()
+  })
+
+  test('cta works with sub-commands', async () => {
+    const cli = Cli.create('test')
+    const pr = Cli.command('pr', { description: 'PR management' })
+    pr.command('create', {
+      args: z.object({ title: z.string() }),
+      output: z.object({ id: z.number(), title: z.string() }),
+      run: ({ args }) => ({ id: 42, title: args.title }),
+      cta: (result) => [
+        { command: `pr get ${result.id}`, description: 'View the PR' },
+      ],
+    })
+    cli.command(pr)
+
+    const { output } = await serve(cli, ['pr', 'create', 'my-pr', '--verbose', '--format', 'json'])
+    const parsed = JSON.parse(output)
+    expect(parsed.meta.cta).toEqual([
+      { command: 'test pr get 42', description: 'View the PR' },
+    ])
+  })
+})

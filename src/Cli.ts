@@ -8,8 +8,6 @@ import * as Schema from './Schema.js'
 
 /** A CLI application instance. */
 export type Cli = {
-  /** The name of the CLI application. */
-  name: string
   /** Registers a command or mounts a command group. Returns the CLI instance for chaining. */
   command: {
     <
@@ -23,16 +21,14 @@ export type Cli = {
     /** Mounts a command group. */
     (group: CommandGroup): Cli
   }
+  /** The name of the CLI application. */
+  name: string
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
 }
 
 /** A command group that contains sub-commands. */
 export type CommandGroup = {
-  /** The command group name. */
-  name: string
-  /** A short description of the command group. */
-  description?: string | undefined
   /** Registers a sub-command or mounts a nested command group. Returns the group for chaining. */
   command: {
     <
@@ -46,6 +42,10 @@ export type CommandGroup = {
     /** Mounts a nested command group. */
     (group: CommandGroup): CommandGroup
   }
+  /** A short description of the command group. */
+  description?: string | undefined
+  /** The command group name. */
+  name: string
 }
 
 /** Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
@@ -56,44 +56,46 @@ type InferOutput<schema extends z.ZodObject<any> | undefined> =
 type InferReturn<output extends z.ZodObject<any> | undefined> =
   output extends z.ZodObject<any> ? z.output<output> : unknown
 
-/** A suggested next command returned from the `next` callback. */
-type NextCommand = {
-  /** The command string to run. */
+/** A suggested next command returned from the `cta` callback. */
+type Cta = {
+  /** The command name to run. */
   command: string
   /** A short description of what the command does. */
   description?: string | undefined
-  /** Pre-filled arguments for the command. */
+  /** Positional arguments appended as bare values. */
   args?: Record<string, unknown> | undefined
+  /** Named options formatted as `--key value` flags. */
+  options?: Record<string, unknown> | undefined
 }
 
 /** The output envelope written to stdout. */
 type Output = OneOf<
   | {
-      /** Whether the command succeeded. */
-      ok: true
       /** The command's return data. */
       data: unknown
       /** Request metadata. */
       meta: Output.Meta
+      /** Whether the command succeeded. */
+      ok: true
     }
   | {
-      /** Whether the command succeeded. */
-      ok: false
       /** Error details. */
       error: {
         /** Machine-readable error code. */
         code: string
-        /** Human-readable error message. */
-        message: string
-        /** Actionable hint for the user. */
-        hint?: string | undefined
-        /** Whether the operation can be retried. */
-        retryable?: boolean | undefined
         /** Per-field validation errors. */
         fieldErrors?: FieldError[] | undefined
+        /** Actionable hint for the user. */
+        hint?: string | undefined
+        /** Human-readable error message. */
+        message: string
+        /** Whether the operation can be retried. */
+        retryable?: boolean | undefined
       }
       /** Request metadata. */
       meta: Output.Meta
+      /** Whether the command succeeded. */
+      ok: false
     }
 >
 
@@ -104,6 +106,8 @@ declare namespace Output {
     command: string
     /** Wall-clock duration of the command. */
     duration: string
+    /** Suggested next commands. Present on success envelopes only. */
+    cta?: Cta[] | undefined
   }
 }
 
@@ -113,33 +117,33 @@ type CommandDefinition<
   options extends z.ZodObject<any> | undefined = undefined,
   output extends z.ZodObject<any> | undefined = undefined,
 > = {
-  /** A short description of what the command does. */
-  description?: string | undefined
-  /** Zod schema for positional arguments. */
-  args?: args
-  /** Zod schema for named options/flags. */
-  options?: options
-  /** Zod schema for the command's return value. */
-  output?: output
   /** Map of option names to single-char aliases. */
   alias?: options extends z.ZodObject<any>
     ? Partial<Record<keyof z.output<options>, string>>
     : Record<string, string> | undefined
-  /** Whether the command only reads data (no side effects). */
-  readOnly?: boolean | undefined
+  /** Zod schema for positional arguments. */
+  args?: args
+  /** Returns suggested next commands based on the result. */
+  cta?: ((result: InferReturn<output>) => Cta[]) | undefined
+  /** A short description of what the command does. */
+  description?: string | undefined
   /** Whether the command may perform destructive operations. */
   destructive?: boolean | undefined
   /** Whether the command can be called multiple times safely. */
   idempotent?: boolean | undefined
   /** Whether the command interacts with external systems. */
   openWorld?: boolean | undefined
+  /** Zod schema for named options/flags. */
+  options?: options
+  /** Zod schema for the command's return value. */
+  output?: output
+  /** Whether the command only reads data (no side effects). */
+  readOnly?: boolean | undefined
   /** The command handler. */
   run(context: {
     args: InferOutput<args>
     options: InferOutput<options>
   }): InferReturn<output> | Promise<InferReturn<output>>
-  /** Returns suggested next commands based on the result. */
-  next?: ((result: InferReturn<output>) => NextCommand[]) | undefined
 }
 
 /** Creates a new CLI application. */
@@ -203,6 +207,7 @@ export function create(name: string, _options: create.Options = {}): Cli {
         })
 
         const data = await command.run({ args, options: parsedOptions })
+        const cta = command.cta ? command.cta(data).map((c) => formatCta(name, c)) : undefined
 
         write({
           ok: true,
@@ -210,6 +215,7 @@ export function create(name: string, _options: create.Options = {}): Cli {
           meta: {
             command: path,
             duration: `${Math.round(performance.now() - start)}ms`,
+            ...(cta ? { cta } : undefined),
           },
         })
       } catch (error) {
@@ -355,6 +361,18 @@ function isGroup(entry: CommandEntry): entry is InternalGroup {
 
 /** @internal Maps public CommandGroup objects to their internal group data. */
 const commandToGroup = new WeakMap<CommandGroup, InternalGroup>()
+
+/** @internal Formats a CTA by prefixing the CLI name and folding `args` and `options` into the command string. */
+function formatCta(name: string, cta: Cta): { command: string; description?: string | undefined } {
+  let cmd = `${name} ${cta.command}`
+  if (cta.args)
+    for (const value of Object.values(cta.args))
+      cmd += ` ${value}`
+  if (cta.options)
+    for (const [key, value] of Object.entries(cta.options))
+      cmd += ` --${key} ${value}`
+  return { command: cmd, ...(cta.description ? { description: cta.description } : undefined) }
+}
 
 /** Builds the `--llms` manifest from the command tree. */
 function buildManifest(commands: Map<string, CommandEntry>) {
