@@ -107,20 +107,6 @@ declare namespace Output {
   }
 }
 
-/** MCP-style tool annotations describing a command's behavior. */
-export type Annotations = {
-  /** Human-readable title for the command. */
-  title?: string | undefined
-  /** Whether the command only reads data (no side effects). */
-  readOnlyHint?: boolean | undefined
-  /** Whether the command may perform destructive operations. */
-  destructiveHint?: boolean | undefined
-  /** Whether the command can be called multiple times safely. */
-  idempotentHint?: boolean | undefined
-  /** Whether the command interacts with external systems. */
-  openWorldHint?: boolean | undefined
-}
-
 /** Defines a command's schema, handler, and metadata. */
 type CommandDefinition<
   args extends z.ZodObject<any> | undefined = undefined,
@@ -139,8 +125,14 @@ type CommandDefinition<
   alias?: options extends z.ZodObject<any>
     ? Partial<Record<keyof z.output<options>, string>>
     : Record<string, string> | undefined
-  /** MCP-style annotations describing the command's behavior. */
-  annotations?: Annotations | undefined
+  /** Whether the command only reads data (no side effects). */
+  readOnly?: boolean | undefined
+  /** Whether the command may perform destructive operations. */
+  destructive?: boolean | undefined
+  /** Whether the command can be called multiple times safely. */
+  idempotent?: boolean | undefined
+  /** Whether the command interacts with external systems. */
+  openWorld?: boolean | undefined
   /** The command handler. */
   run(context: {
     args: InferOutput<args>
@@ -380,7 +372,7 @@ function collectCommands(
   name: string
   description?: string
   schema?: Record<string, unknown>
-  annotations?: Annotations
+  annotations?: Record<string, boolean>
 }[] {
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
@@ -399,11 +391,25 @@ function collectCommands(
         if (outputSchema) cmd.schema.output = outputSchema
       }
 
-      if (entry.annotations) cmd.annotations = entry.annotations
+      const annotations = buildAnnotations(entry)
+      if (annotations) cmd.annotations = annotations
       result.push(cmd)
     }
   }
   return result
+}
+
+/** Extracts annotation flags from a command definition, mapped to MCP-style keys. */
+function buildAnnotations(
+  entry: CommandDefinition<any, any, any>,
+): Record<string, boolean> | undefined {
+  const map: Record<string, boolean> = {}
+  let has = false
+  if (entry.readOnly !== undefined) { map.readOnlyHint = entry.readOnly; has = true }
+  if (entry.destructive !== undefined) { map.destructiveHint = entry.destructive; has = true }
+  if (entry.idempotent !== undefined) { map.idempotentHint = entry.idempotent; has = true }
+  if (entry.openWorld !== undefined) { map.openWorldHint = entry.openWorld; has = true }
+  return has ? map : undefined
 }
 
 /** Merges args + options schemas into a single input JSON Schema. */

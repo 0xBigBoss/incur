@@ -301,7 +301,8 @@ describe('--llms', () => {
     const cli = Cli.create('test')
     cli.command('list', {
       description: 'List items',
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      readOnly: true,
+      openWorld: true,
       run: () => ({ items: [] }),
     })
 
@@ -383,7 +384,7 @@ describe('--llms', () => {
       args: z.object({ name: z.string().describe('Name to greet') }),
       options: z.object({ loud: z.boolean().default(false).describe('Shout it') }),
       output: z.object({ message: z.string() }),
-      annotations: { readOnlyHint: true },
+      readOnly: true,
       run: ({ args }) => ({ message: `hello ${args.name}` }),
     })
 
