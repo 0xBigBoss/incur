@@ -4,8 +4,9 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     alias: {
-      'clac': path.resolve(import.meta.dirname, 'src'),
+      clac: path.resolve(import.meta.dirname, 'src'),
     },
     globals: true,
+    passWithNoTests: true,
   },
 })
