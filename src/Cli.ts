@@ -121,11 +121,17 @@ export function create(name: string, _options: create.Options = {}): Cli {
       const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
       const exit = options.exit ?? ((code: number) => process.exit(code))
 
-      const [commandName, ...rest] = argv
+      // Extract built-in flags before command parsing
+      const verbose = argv.includes('--verbose')
+      const filtered = argv.filter((t) => t !== '--verbose')
+
+      const [commandName, ...rest] = filtered
       const start = performance.now()
 
-      function write(envelope: Output) {
-        stdout(Formatter.format(envelope))
+      function write(output: Output) {
+        if (verbose) return stdout(Formatter.format(output))
+        if (output.ok) stdout(Formatter.format(output.data as Record<string, unknown>))
+        else stdout(Formatter.format(output.error as Record<string, unknown>))
       }
 
       if (!commandName || !commands.has(commandName)) {

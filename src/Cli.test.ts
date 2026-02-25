@@ -43,7 +43,7 @@ describe('command', () => {
 })
 
 describe('serve', () => {
-  test('routes to correct command handler', async () => {
+  test('outputs data only by default', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
@@ -53,6 +53,19 @@ describe('serve', () => {
     })
 
     const { output } = await serve(cli, ['greet', 'world'])
+    expect(output).toMatchInlineSnapshot(`"message: hello world"`)
+  })
+
+  test('--verbose outputs full envelope', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run({ args }) {
+        return { message: `hello ${args.name}` }
+      },
+    })
+
+    const { output } = await serve(cli, ['greet', 'world', '--verbose'])
     expect(output).toMatchInlineSnapshot(`
       "ok: true
       data:
@@ -87,23 +100,25 @@ describe('serve', () => {
     })
 
     const { output } = await serve(cli, ['ping'])
-
-    // TOON is not JSON
     expect(() => JSON.parse(output)).toThrow()
-    expect(output).toMatchInlineSnapshot(`
-      "ok: true
-      data:
-        pong: true
-      meta:
-        command: ping
-        duration: <stripped>"
-    `)
+    expect(output).toMatchInlineSnapshot(`"pong: true"`)
   })
 
-  test('outputs error envelope for unknown command', async () => {
+  test('outputs error details for unknown command', async () => {
     const cli = Cli.create('test')
 
     const { output, exitCode } = await serve(cli, ['nonexistent'])
+    expect(exitCode).toBe(1)
+    expect(output).toMatchInlineSnapshot(`
+      "code: COMMAND_NOT_FOUND
+      message: "Unknown command: nonexistent""
+    `)
+  })
+
+  test('--verbose outputs full error envelope for unknown command', async () => {
+    const cli = Cli.create('test')
+
+    const { output, exitCode } = await serve(cli, ['nonexistent', '--verbose'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
       "ok: false
@@ -116,7 +131,7 @@ describe('serve', () => {
     `)
   })
 
-  test('wraps handler errors in error envelope', async () => {
+  test('wraps handler errors in error output', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {
       run() {
@@ -127,17 +142,12 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "ok: false
-      error:
-        code: UNKNOWN
-        message: boom
-      meta:
-        command: fail
-        duration: <stripped>"
+      "code: UNKNOWN
+      message: boom"
     `)
   })
 
-  test('ClacError in run() populates code/hint/retryable in envelope', async () => {
+  test('ClacError in run() populates code/hint/retryable', async () => {
     const cli = Cli.create('test')
     cli.command('fail', {
       run() {
@@ -153,19 +163,14 @@ describe('serve', () => {
     const { output, exitCode } = await serve(cli, ['fail'])
     expect(exitCode).toBe(1)
     expect(output).toMatchInlineSnapshot(`
-      "ok: false
-      error:
-        code: NOT_AUTHENTICATED
-        message: Token not found
-        hint: Set GH_TOKEN env var
-        retryable: false
-      meta:
-        command: fail
-        duration: <stripped>"
+      "code: NOT_AUTHENTICATED
+      message: Token not found
+      hint: Set GH_TOKEN env var
+      retryable: false"
     `)
   })
 
-  test('ValidationError includes fieldErrors in envelope', async () => {
+  test('ValidationError includes fieldErrors', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {
       args: z.object({ name: z.string() }),
@@ -189,13 +194,6 @@ describe('serve', () => {
     })
 
     const { output } = await serve(cli, ['async'])
-    expect(output).toMatchInlineSnapshot(`
-      "ok: true
-      data:
-        done: true
-      meta:
-        command: async
-        duration: <stripped>"
-    `)
+    expect(output).toMatchInlineSnapshot(`"done: true"`)
   })
 })
