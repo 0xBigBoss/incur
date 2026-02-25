@@ -236,6 +236,208 @@ describe('serve', () => {
   })
 })
 
+describe('--llms', () => {
+  test('outputs manifest with version and commands', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.version).toBe('clac.v1')
+    expect(manifest.commands).toHaveLength(1)
+    expect(manifest.commands[0].name).toBe('ping')
+    expect(manifest.commands[0].description).toBe('Health check')
+  })
+
+  test('manifest includes schema.input from args and options', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      options: z.object({ loud: z.boolean().default(false) }),
+      run: ({ args }) => ({ message: `hello ${args.name}` }),
+    })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].schema.input).toEqual({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        loud: { type: 'boolean', default: false },
+      },
+      required: ['name', 'loud'],
+      additionalProperties: false,
+    })
+  })
+
+  test('manifest includes schema.output when defined', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ message: z.string() }),
+      run: ({ args }) => ({ message: `hello ${args.name}` }),
+    })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].schema.output).toEqual({
+      type: 'object',
+      properties: { message: { type: 'string' } },
+      required: ['message'],
+      additionalProperties: false,
+    })
+  })
+
+  test('manifest omits schema when no schemas defined', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].schema).toBeUndefined()
+  })
+
+  test('manifest includes annotations when defined', async () => {
+    const cli = Cli.create('test')
+    cli.command('list', {
+      description: 'List items',
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      run: () => ({ items: [] }),
+    })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].annotations).toEqual({ readOnlyHint: true, openWorldHint: true })
+  })
+
+  test('manifest omits annotations when not defined', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].annotations).toBeUndefined()
+  })
+
+  test('nested commands appear with full path in manifest', async () => {
+    const cli = Cli.create('test')
+    const pr = Cli.command('pr', { description: 'PR management' })
+    pr.command('list', {
+      description: 'List PRs',
+      options: z.object({ state: z.enum(['open', 'closed']).default('open') }),
+      run: () => ({ items: [] }),
+    })
+    pr.command('create', {
+      description: 'Create PR',
+      args: z.object({ title: z.string() }),
+      run: ({ args }) => ({ title: args.title }),
+    })
+    cli.command(pr)
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands).toHaveLength(2)
+    expect(manifest.commands[0].name).toBe('pr create')
+    expect(manifest.commands[1].name).toBe('pr list')
+  })
+
+  test('deeply nested commands in manifest', async () => {
+    const cli = Cli.create('test')
+    const pr = Cli.command('pr', { description: 'PR management' })
+    const review = Cli.command('review', { description: 'Reviews' })
+    review.command('approve', {
+      description: 'Approve a review',
+      run: () => ({ approved: true }),
+    })
+    pr.command(review)
+    cli.command(pr)
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands[0].name).toBe('pr review approve')
+    expect(manifest.commands[0].description).toBe('Approve a review')
+  })
+
+  test('defaults to TOON format', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--llms'])
+    expect(output).toContain('version: clac.v1')
+    expect(output).toContain('ping')
+  })
+
+  test('respects --format yaml', async () => {
+    const cli = Cli.create('test')
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'yaml'])
+    expect(output).toContain('version: clac.v1')
+    expect(output).toContain('name: ping')
+  })
+
+  test('full manifest snapshot', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      description: 'Greet someone',
+      args: z.object({ name: z.string().describe('Name to greet') }),
+      options: z.object({ loud: z.boolean().default(false).describe('Shout it') }),
+      output: z.object({ message: z.string() }),
+      annotations: { readOnlyHint: true },
+      run: ({ args }) => ({ message: `hello ${args.name}` }),
+    })
+
+    const { output } = await serve(cli, ['--llms', '--format', 'json'])
+    expect(JSON.parse(output)).toMatchInlineSnapshot(`
+      {
+        "commands": [
+          {
+            "annotations": {
+              "readOnlyHint": true,
+            },
+            "description": "Greet someone",
+            "name": "greet",
+            "schema": {
+              "input": {
+                "additionalProperties": false,
+                "properties": {
+                  "loud": {
+                    "default": false,
+                    "description": "Shout it",
+                    "type": "boolean",
+                  },
+                  "name": {
+                    "description": "Name to greet",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "name",
+                  "loud",
+                ],
+                "type": "object",
+              },
+              "output": {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "message",
+                ],
+                "type": "object",
+              },
+            },
+          },
+        ],
+        "version": "clac.v1",
+      }
+    `)
+  })
+})
+
 describe('subcommands', () => {
   test('creates a command group with name and description', () => {
     const pr = Cli.command('pr', { description: 'PR management' })

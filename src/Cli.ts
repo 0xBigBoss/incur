@@ -1,9 +1,10 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { FieldError } from './Errors.js'
 import { ClacError, ValidationError } from './Errors.js'
 import * as Formatter from './Formatter.js'
 import type { OneOf } from './internal/types.js'
 import * as Parser from './Parser.js'
+import * as Schema from './Schema.js'
 
 /** A CLI application instance. */
 export type Cli = {
@@ -106,6 +107,20 @@ declare namespace Output {
   }
 }
 
+/** MCP-style tool annotations describing a command's behavior. */
+export type Annotations = {
+  /** Human-readable title for the command. */
+  title?: string | undefined
+  /** Whether the command only reads data (no side effects). */
+  readOnlyHint?: boolean | undefined
+  /** Whether the command may perform destructive operations. */
+  destructiveHint?: boolean | undefined
+  /** Whether the command can be called multiple times safely. */
+  idempotentHint?: boolean | undefined
+  /** Whether the command interacts with external systems. */
+  openWorldHint?: boolean | undefined
+}
+
 /** Defines a command's schema, handler, and metadata. */
 type CommandDefinition<
   args extends z.ZodObject<any> | undefined = undefined,
@@ -124,6 +139,8 @@ type CommandDefinition<
   alias?: options extends z.ZodObject<any>
     ? Partial<Record<keyof z.output<options>, string>>
     : Record<string, string> | undefined
+  /** MCP-style annotations describing the command's behavior. */
+  annotations?: Annotations | undefined
   /** The command handler. */
   run(context: {
     args: InferOutput<args>
@@ -151,7 +168,12 @@ export function create(name: string, _options: create.Options = {}): Cli {
       const exit = options.exit ?? ((code: number) => process.exit(code))
 
       // Extract built-in flags before command parsing
-      const { verbose, format, rest: filtered } = extractBuiltinFlags(argv)
+      const { verbose, format, llms, rest: filtered } = extractBuiltinFlags(argv)
+
+      if (llms) {
+        stdout(Formatter.format(buildManifest(commands), format))
+        return
+      }
 
       const start = performance.now()
 
@@ -303,15 +325,17 @@ function resolveCommand(
   return { command: entry, path: path.join(' '), rest: remaining }
 }
 
-/** Extracts built-in flags (--verbose, --format, --json) from argv. */
+/** Extracts built-in flags (--verbose, --format, --json, --llms) from argv. */
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
+  let llms = false
   let format: Formatter.Format = 'toon'
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
     if (token === '--verbose') verbose = true
+    else if (token === '--llms') llms = true
     else if (token === '--json') format = 'json'
     else if (token === '--format' && argv[i + 1]) {
       format = argv[i + 1] as Formatter.Format
@@ -319,7 +343,7 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, rest }
+  return { verbose, format, llms, rest }
 }
 
 /** @internal Entry stored in a command map — either a leaf definition or a group. */
@@ -339,3 +363,58 @@ function isGroup(entry: CommandEntry): entry is InternalGroup {
 
 /** @internal Maps public CommandGroup objects to their internal group data. */
 const commandToGroup = new WeakMap<CommandGroup, InternalGroup>()
+
+/** Builds the `--llms` manifest from the command tree. */
+function buildManifest(commands: Map<string, CommandEntry>) {
+  return {
+    version: 'clac.v1',
+    commands: collectCommands(commands, []).sort((a, b) => a.name.localeCompare(b.name)),
+  }
+}
+
+/** Recursively collects leaf commands with their full paths. */
+function collectCommands(
+  commands: Map<string, CommandEntry>,
+  prefix: string[],
+): {
+  name: string
+  description?: string
+  schema?: Record<string, unknown>
+  annotations?: Annotations
+}[] {
+  const result: ReturnType<typeof collectCommands> = []
+  for (const [name, entry] of commands) {
+    const path = [...prefix, name]
+    if (isGroup(entry)) {
+      result.push(...collectCommands(entry.commands, path))
+    } else {
+      const cmd: (typeof result)[number] = { name: path.join(' ') }
+      if (entry.description) cmd.description = entry.description
+
+      const inputSchema = buildInputSchema(entry.args, entry.options)
+      const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
+      if (inputSchema || outputSchema) {
+        cmd.schema = {}
+        if (inputSchema) cmd.schema.input = inputSchema
+        if (outputSchema) cmd.schema.output = outputSchema
+      }
+
+      if (entry.annotations) cmd.annotations = entry.annotations
+      result.push(cmd)
+    }
+  }
+  return result
+}
+
+/** Merges args + options schemas into a single input JSON Schema. */
+function buildInputSchema(
+  args: z.ZodObject<any> | undefined,
+  options: z.ZodObject<any> | undefined,
+): Record<string, unknown> | undefined {
+  if (!args && !options) return undefined
+  const merged = z.object({
+    ...(args?.shape ?? {}),
+    ...(options?.shape ?? {}),
+  })
+  return Schema.toJsonSchema(merged)
+}
