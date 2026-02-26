@@ -202,7 +202,7 @@ describe('split', () => {
     expect(files[0]!.content).toMatchInlineSnapshot(`
       "---
       name: gh-auth
-      description: Authenticate with GitHub. Log in, Check status
+      description: Authenticate with GitHub. Log in, Check status. Run \`gh auth --help\` for usage details.
       command: gh auth
       ---
 
@@ -219,7 +219,7 @@ describe('split', () => {
     expect(files[1]!.content).toMatchInlineSnapshot(`
       "---
       name: gh-pr
-      description: Manage pull requests. List PRs, Create PR
+      description: Manage pull requests. List PRs, Create PR. Run \`gh pr --help\` for usage details.
       command: gh pr
       ---
 
@@ -237,7 +237,7 @@ describe('split', () => {
 
   test('depth 1 without group descriptions uses child descriptions', () => {
     const files = Skill.split('gh', commands, 1)
-    expect(files[0]!.content).toContain('description: Log in, Check status')
+    expect(files[0]!.content).toContain('description: Log in, Check status. Run `gh auth --help` for usage details.')
   })
 
   test('depth 2 groups by first two segments', () => {
@@ -259,6 +259,27 @@ describe('split', () => {
         "ping",
       ]
     `)
+  })
+
+  test('description includes --help hint for depth 0', () => {
+    const files = Skill.split('gh', commands, 0, groups)
+    expect(files[0]!.content).toContain('Run `gh --help` for usage details.')
+  })
+
+  test('description includes --help hint for depth 1 with groups', () => {
+    const files = Skill.split('gh', commands, 1, groups)
+    expect(files[0]!.content).toContain('Run `gh auth --help` for usage details.')
+    expect(files[1]!.content).toContain('Run `gh pr --help` for usage details.')
+  })
+
+  test('description includes --help hint for depth 2', () => {
+    const files = Skill.split('gh', commands, 2)
+    expect(files[0]!.content).toContain('Run `gh auth login --help` for usage details.')
+  })
+
+  test('omits --help hint when no descriptions exist', () => {
+    const files = Skill.split('test', [{ name: 'ping' }], 1)
+    expect(files[0]!.content).not.toContain('--help')
   })
 
   test('no per-command frontmatter in split files', () => {

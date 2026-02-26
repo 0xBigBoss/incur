@@ -92,7 +92,7 @@ function renderGroup(
 
   const slug = title.replace(/\s+/g, '-')
   const fm = ['---', `name: ${slug}`]
-  if (description) fm.push(`description: ${description}`)
+  if (description) fm.push(`description: ${description}. Run \`${title} --help\` for usage details.`)
   fm.push(`command: ${title}`, '---')
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')
