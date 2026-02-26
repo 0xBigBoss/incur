@@ -8,7 +8,7 @@ import { detectRunner } from './internal/pm.js'
 /** Registers the CLI as an MCP server via `npx add-mcp` and direct config writes for unsupported agents. */
 export async function register(name: string, options: register.Options = {}): Promise<register.Result> {
   const runner = detectRunner()
-  const command = options.command ?? `${runner} ${name} --mcp`
+  const command = options.command ?? `${runner} ${detectPackageSpecifier(name)} --mcp`
   const targetAgents = options.agents ?? []
   const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
 
@@ -93,6 +93,27 @@ export declare namespace register {
     /** The command registered. */
     command: string
   }
+}
+
+/** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
+function detectPackageSpecifier(name: string): string {
+  const bin = process.argv[1]
+  if (!bin) return name
+
+  const match = bin.match(/^(.+)[/\\]node_modules[/\\]/)
+  if (!match) return name
+
+  try {
+    const pkg = JSON.parse(readFileSync(join(match[1]!, 'package.json'), 'utf-8'))
+    const deps = pkg.dependencies ?? {}
+    const spec = deps[name]
+    if (!spec || Object.keys(deps).length !== 1) return name
+
+    if (/^https?:\/\//.test(spec) || spec.startsWith('file:')) return spec
+    if (/^\d/.test(spec)) return `${name}@${spec}`
+  } catch {}
+
+  return name
 }
 
 /** Promisified execFile with stderr in error message. */
