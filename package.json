@@ -27,8 +27,10 @@
   "version": "0.0.0",
   "license": "MIT",
   "files": [
+    "examples",
     "dist",
-    "src"
+    "src",
+    "SKILL.md"
   ],
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
