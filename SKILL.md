@@ -401,7 +401,40 @@ run({ args, error }) {
 
 ## Agent Discovery
 
-### `skills add` built-in command
+### MCP Server
+
+Every incur CLI has built-in Model Context Protocol (MCP) support — exposing commands as MCP tools that agents can call directly.
+
+#### `mcp add` built-in command
+
+Register the CLI as an MCP server for your agents:
+
+```sh
+my-cli mcp add
+```
+
+This registers the CLI with your agent's MCP config. Works with Claude Code, Cursor, Amp, and others out of the box.
+
+Options:
+
+| Flag                   | Description                                              |
+| ---------------------- | -------------------------------------------------------- |
+| `-c`, `--command`      | Override the command agents will run to start the server  |
+| `--agent <agent>`      | Target a specific agent (e.g. `claude-code`, `cursor`)   |
+| `--no-global`          | Install to project instead of globally                   |
+
+
+#### `--mcp` flag
+
+Start the CLI as an MCP stdio server:
+
+```sh
+my-cli --mcp
+```
+
+This exposes all commands as MCP tools over stdin/stdout. Command groups are flattened with underscores (e.g. `pr_list`, `pr_view`). Arguments and options are merged into a single flat input schema.
+
+### Skills
 
 All incur-based CLIs can auto-generate and install agent skill files with `skills add`:
 
@@ -486,6 +519,7 @@ Use `--llms --format json` for JSON schema manifest:
 | `--help`, `-h`       | Show help for the CLI or a specific command  |
 | `--version`          | Print CLI version                            |
 | `--llms`             | Output agent-readable command manifest       |
+| `--mcp`              | Start as an MCP stdio server                 |
 | `--json`             | Shorthand for `--format json`                |
 | `--format <fmt>`     | Output format: `toon`, `json`, `yaml`, `md`  |
 | `--verbose`          | Include full envelope (`ok`, `data`, `meta`) |
