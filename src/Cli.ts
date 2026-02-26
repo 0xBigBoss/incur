@@ -673,6 +673,7 @@ declare namespace serveImpl {
     format?: Formatter.Format | undefined
     sync?:
       | {
+          cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined
           suggestions?: string[] | undefined
