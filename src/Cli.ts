@@ -246,6 +246,8 @@ export declare namespace create {
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
+          /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
+          cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
           depth?: number | undefined
           /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). */
@@ -356,6 +358,7 @@ async function serveImpl(
     try {
       if (human) stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
+        cwd: options.sync?.cwd,
         depth,
         description: options.description,
         global,

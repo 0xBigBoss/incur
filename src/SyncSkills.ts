@@ -13,6 +13,7 @@ export async function sync(
   commands: Map<string, any>,
   options: sync.Options = {},
 ): Promise<sync.Result> {
+  const cwd = options.cwd ?? process.cwd()
   const { depth = 1, description, global = true } = options
 
   const groups = new Map<string, string>()
@@ -37,9 +38,9 @@ export async function sync(
     if (options.include) {
       for (const pattern of options.include) {
         const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
-        for await (const match of fs.glob(globPattern)) {
+        for await (const match of fs.glob(globPattern, { cwd })) {
           try {
-            const content = await fs.readFile(match, 'utf8')
+            const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
             const nameMatch = content.match(/^name:\s*(.+)$/m)
             const skillName =
               pattern === '_root' ? (nameMatch?.[1] ?? name) : path.basename(path.dirname(match))
@@ -81,6 +82,8 @@ export async function sync(
 export declare namespace sync {
   /** Options for syncing skills. */
   type Options = {
+    /** Working directory for resolving `include` globs. Defaults to `process.cwd()`. */
+    cwd?: string | undefined
     /** Grouping depth for skill files. Defaults to `1`. */
     depth?: number | undefined
     /** CLI description, used as the top-level group description. */
