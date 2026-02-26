@@ -26,12 +26,14 @@ const pr = Cli.create('pr', { description: 'Manage pull requests' })
       ),
       totalCount: z.number(),
     }),
-    examples: [{
-      description: 'List open pull requests',
-      options: {
-        state: 'open'
-      }
-    }],
+    examples: [
+      {
+        description: 'List open pull requests',
+        options: {
+          state: 'open',
+        },
+      },
+    ],
     run({ ok }) {
       const items: { number: number; title: string; state: string; author: string }[] = []
       return ok(

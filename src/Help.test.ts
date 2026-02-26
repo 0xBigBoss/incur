@@ -22,7 +22,14 @@ describe('formatCommand', () => {
 
       Options:
         --state <string>  Filter by state (default: open)
-        --limit <number>  Max PRs to return (default: 30)"
+        --limit <number>  Max PRs to return (default: 30)
+
+      Global Options:
+        --format <toon|json|yaml|md>  Output format
+        --help                        Show help
+        --llms                        Print LLM-readable manifest
+        --verbose                     Show full output envelope
+        --version                     Show version"
     `)
   })
 
@@ -33,7 +40,14 @@ describe('formatCommand', () => {
     expect(result).toMatchInlineSnapshot(`
       "tool ping — Health check
 
-      Usage: tool ping"
+      Usage: tool ping
+
+      Global Options:
+        --format <toon|json|yaml|md>  Output format
+        --help                        Show help
+        --llms                        Print LLM-readable manifest
+        --verbose                     Show full output envelope
+        --version                     Show version"
     `)
   })
 
@@ -51,7 +65,14 @@ describe('formatCommand', () => {
 
       Arguments:
         name   Name
-        title  Title"
+        title  Title
+
+      Global Options:
+        --format <toon|json|yaml|md>  Output format
+        --help                        Show help
+        --llms                        Print LLM-readable manifest
+        --verbose                     Show full output envelope
+        --version                     Show version"
     `)
   })
 })
@@ -74,7 +95,14 @@ describe('formatRoot', () => {
       Commands:
         pr list     List pull requests
         pr view     View a pull request
-        issue list  List issues"
+        issue list  List issues
+
+      Global Options:
+        --format <toon|json|yaml|md>  Output format
+        --help                        Show help
+        --llms                        Print LLM-readable manifest
+        --verbose                     Show full output envelope
+        --version                     Show version"
     `)
   })
 
@@ -88,7 +116,14 @@ describe('formatRoot', () => {
       Usage: tool <command>
 
       Commands:
-        ping  Health check"
+        ping  Health check
+
+      Global Options:
+        --format <toon|json|yaml|md>  Output format
+        --help                        Show help
+        --llms                        Print LLM-readable manifest
+        --verbose                     Show full output envelope
+        --version                     Show version"
     `)
   })
 })
