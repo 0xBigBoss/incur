@@ -439,8 +439,10 @@ async function serveImpl(
         }),
       )
     } else {
+      const commandName =
+        resolved.path === name ? name : `${name} ${resolved.path}`
       writeln(
-        Help.formatCommand(`${name} ${resolved.path}`, {
+        Help.formatCommand(commandName, {
           alias: resolved.command.alias as Record<string, string> | undefined,
           description: resolved.command.description,
           args: resolved.command.args,
@@ -613,7 +615,7 @@ function formatHumanValidationError(
   lines.push('See below for usage.')
   lines.push('')
   lines.push(
-    Help.formatCommand(`${cli} ${path}`, {
+    Help.formatCommand(path === cli ? cli : `${cli} ${path}`, {
       alias: command.alias as Record<string, string> | undefined,
       description: command.description,
       args: command.args,
