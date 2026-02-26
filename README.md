@@ -83,16 +83,15 @@ Cli.create('my-cli', {
 const cli = Cli.create('my-cli', { description: 'My CLI' })
 
 // Create a `pr` group.
-const pr = Cli.create('pr', { description: 'Pull request commands' })
-  .command('list', {
-    description: 'List pull requests',
-    options: z.object({
-      state: z.enum(['open', 'closed', 'all']).default('open'),
-    }),
-    run({ options }) {
-      return { prs: [], state: options.state }
-    },
-  })
+const pr = Cli.create('pr', { description: 'Pull request commands' }).command('list', {
+  description: 'List pull requests',
+  options: z.object({
+    state: z.enum(['open', 'closed', 'all']).default('open'),
+  }),
+  run({ options }) {
+    return { prs: [], state: options.state }
+  },
+})
 
 cli
   .command(pr) // Link the `pr` group.

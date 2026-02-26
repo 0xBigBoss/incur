@@ -4,12 +4,8 @@ const cli = Cli.create('npm', {
   version: '10.9.2',
   description: 'The package manager for JavaScript.',
   sync: {
-    suggestions: [
-      'install react as a dependency',
-      'check for outdated packages',
-      'audit my repo',
-    ]
-  }
+    suggestions: ['install react as a dependency', 'check for outdated packages', 'audit my repo'],
+  },
 })
 
 cli.command('install', {

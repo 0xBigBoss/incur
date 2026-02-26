@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+
 import type { FieldError } from './Errors.js'
 import { ClacError, ValidationError } from './Errors.js'
 import * as Formatter from './Formatter.js'
@@ -225,28 +226,34 @@ export declare namespace create {
     /** Zod schema for the return value. */
     output?: output | undefined
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
-    run?: ((context: {
-      args: InferOutput<args>
-      /** Parsed environment variables. */
-      env: InferOutput<env>
-      /** Return an error result with optional CTAs. */
-      error: (options: {
-        code: string
-        cta?: CtaBlock | undefined
-        message: string
-        retryable?: boolean | undefined
-      }) => never
-      /** Return a success result with optional metadata (e.g. CTAs). */
-      ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
-      options: InferOutput<options>
-    }) => InferReturn<output> | Promise<InferReturn<output>>) | undefined
+    run?:
+      | ((context: {
+          args: InferOutput<args>
+          /** Parsed environment variables. */
+          env: InferOutput<env>
+          /** Return an error result with optional CTAs. */
+          error: (options: {
+            code: string
+            cta?: CtaBlock | undefined
+            message: string
+            retryable?: boolean | undefined
+          }) => never
+          /** Return a success result with optional metadata (e.g. CTAs). */
+          ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+          options: InferOutput<options>
+        }) => InferReturn<output> | Promise<InferReturn<output>>)
+      | undefined
     /** Options for the built-in `skills add` command. */
-    sync?: {
-      /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
-      depth?: number | undefined
-      /** Example prompts shown after sync to help users get started. */
-      suggestions?: string[] | undefined
-    } | undefined
+    sync?:
+      | {
+          /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
+          depth?: number | undefined
+          /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). */
+          include?: string[] | undefined
+          /** Example prompts shown after sync to help users get started. */
+          suggestions?: string[] | undefined
+        }
+      | undefined
     /** The CLI version string. */
     version?: string | undefined
   }
@@ -325,7 +332,8 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add`
-  const skillsIdx = filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
+  const skillsIdx =
+    filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
   if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills' && filtered[skillsIdx + 1] === 'add') {
     if (help) {
       writeln(
@@ -351,15 +359,19 @@ async function serveImpl(
         depth,
         description: options.description,
         global,
+        include: options.sync?.include,
       })
       if (human) {
         stdout('\r\x1b[K')
         const lines: string[] = []
-        const skillLabel = (s: (typeof result.skills)[number]) => s.name === name ? name : `${name}-${s.name}`
+        const skillLabel = (s: (typeof result.skills)[number]) =>
+          s.external || s.name === name ? s.name : `${name}-${s.name}`
         const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
         for (const s of result.skills) {
           const label = skillLabel(s)
-          const padding = s.description ? `${' '.repeat(maxLen - label.length)}  ${s.description}` : ''
+          const padding = s.description
+            ? `${' '.repeat(maxLen - label.length)}  ${s.description}`
+            : ''
           lines.push(`  ✓ ${label}${padding}`)
         }
         lines.push('')
@@ -373,7 +385,8 @@ async function serveImpl(
         lines.push('')
         lines.push(`Run \`${name} --help\` to see the full command reference.`)
         writeln(lines.join('\n'))
-      } else writeln(Formatter.format({ skills: result.paths }, formatExplicit ? formatFlag : 'toon'))
+      } else
+        writeln(Formatter.format({ skills: result.paths }, formatExplicit ? formatFlag : 'toon'))
     } catch (err) {
       writeln(
         Formatter.format(
@@ -655,7 +668,13 @@ declare namespace serveImpl {
     description?: string | undefined
     /** CLI-level default output format. */
     format?: Formatter.Format | undefined
-    sync?: { depth?: number | undefined; suggestions?: string[] | undefined } | undefined
+    sync?:
+      | {
+          depth?: number | undefined
+          include?: string[] | undefined
+          suggestions?: string[] | undefined
+        }
+      | undefined
     version?: string | undefined
   }
 }

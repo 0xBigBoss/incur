@@ -1,0 +1,593 @@
+---
+name: build-clis
+description: Building CLI frameworks for agents and humans.
+command: clac
+---
+
+# clac
+
+TypeScript framework for building CLIs for agents and human consumption. Strictly typed schemas for arguments and options, structured output envelopes, auto-generated skill files, and agent discovery via `--llms`.
+
+## Install
+
+```sh
+npm i clac
+```
+
+```sh
+pnpm i clac
+```
+
+```sh
+bun i clac
+```
+
+## Quick Start
+
+```ts
+import { Cli, z } from 'clac'
+
+const cli = Cli.create('greet', {
+  description: 'A greeting CLI',
+  args: z.object({
+    name: z.string().describe('Name to greet'),
+  }),
+  run({ args }) {
+    return { message: `hello ${args.name}` }
+  },
+})
+
+cli.serve()
+```
+
+```sh
+greet world
+# → message: hello world
+```
+
+## Creating a CLI
+
+`Cli.create()` is the entry point. It has two modes:
+
+### Single-command CLI
+
+Pass `run` to create a CLI with no subcommands:
+
+```ts
+const cli = Cli.create('tool', {
+  description: 'Does one thing',
+  args: z.object({ file: z.string() }),
+  run({ args, options }) {
+    return { processed: args.file }
+  },
+})
+```
+
+### Router CLI (subcommands)
+
+Omit `run` to create a CLI that registers subcommands via `.command()`:
+
+```ts
+const cli = Cli.create('gh', {
+  version: '1.0.0',
+  description: 'GitHub CLI',
+})
+
+cli.command('status', {
+  description: 'Show repo status',
+  run() {
+    return { clean: true }
+  },
+})
+
+cli.serve()
+```
+
+## Commands
+
+### Registering commands
+
+```ts
+cli.command('install', {
+  description: 'Install a package',
+  args: z.object({
+    package: z.string().optional().describe('Package name'),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe('Save as dev dependency'),
+    global: z.boolean().optional().describe('Install globally'),
+  }),
+  alias: { saveDev: 'D', global: 'g' },
+  output: z.object({
+    added: z.number(),
+    packages: z.number(),
+  }),
+  examples: [
+    { args: { package: 'express' }, description: 'Install a package' },
+    {
+      args: { package: 'vitest' },
+      options: { saveDev: true },
+      description: 'Install as dev dependency',
+    },
+  ],
+  run({ args, options }) {
+    return { added: 1, packages: 451 }
+  },
+})
+```
+
+`.command()` is chainable — it returns the CLI instance:
+
+```ts
+cli
+  .command('ping', { run: () => ({ pong: true }) })
+  .command('version', { run: () => ({ version: '1.0.0' }) })
+```
+
+### Subcommand groups
+
+Create a sub-CLI and mount it as a command group:
+
+```ts
+const cli = Cli.create('gh', { description: 'GitHub CLI' })
+
+const pr = Cli.create('pr', { description: 'Pull request commands' })
+
+pr.command('list', {
+  description: 'List pull requests',
+  options: z.object({
+    state: z.enum(['open', 'closed', 'all']).default('open'),
+  }),
+  run({ options }) {
+    return { prs: [], state: options.state }
+  },
+})
+
+pr.command('view', {
+  description: 'View a pull request',
+  args: z.object({ number: z.number() }),
+  run({ args }) {
+    return { number: args.number, title: 'Fix bug' }
+  },
+})
+
+// Mount onto the parent CLI
+cli.command(pr)
+
+cli.serve()
+```
+
+```sh
+gh pr list --state closed
+gh pr view 42
+```
+
+Groups nest arbitrarily:
+
+```ts
+const cli = Cli.create('gh', { description: 'GitHub CLI' })
+const pr = Cli.create('pr', { description: 'Pull requests' })
+const review = Cli.create('review', { description: 'Review commands' })
+
+review.command('approve', { run: () => ({ approved: true }) })
+pr.command(review)
+cli.command(pr)
+// → gh pr review approve
+```
+
+## Arguments & Options
+
+All schemas use Zod. Arguments are positional (assigned by schema key order). Options are named flags.
+
+### Arguments
+
+```ts
+args: z.object({
+  repo: z.string().describe('Repository in owner/repo format'),
+  branch: z.string().optional().describe('Branch name'),
+})
+```
+
+```sh
+tool clone owner/repo main
+#          ^^^^^^^^^^ ^^^^
+#          repo       branch
+```
+
+### Options
+
+```ts
+options: z.object({
+  state: z.enum(['open', 'closed']).default('open').describe('Filter by state'),
+  limit: z.number().default(30).describe('Max results'),
+  label: z.array(z.string()).optional().describe('Filter by labels'),
+  verbose: z.boolean().optional().describe('Show details'),
+})
+```
+
+Supported parsing:
+
+- `--flag value` and `--flag=value`
+- `-f value` short aliases (via `alias` property)
+- `--verbose` boolean flags (`true`), `--no-verbose` (`false`)
+- `--label bug --label feature` array options
+- Automatic type coercion (string → number, string → boolean)
+- Defaults from `.default()`, optionality from `.optional()`
+
+### Aliases
+
+```ts
+alias: { state: 's', limit: 'l' }
+```
+
+```sh
+tool list -s closed -l 10
+```
+
+### Environment variables
+
+```ts
+env: z.object({
+  NPM_TOKEN: z.string().optional().describe('Auth token'),
+  NPM_REGISTRY: z.string().default('https://registry.npmjs.org').describe('Registry URL'),
+})
+```
+
+Environment variables are parsed from `process.env` and validated against the Zod schema.
+
+## Output
+
+Every command returns data. clac wraps it in a structured envelope and serializes to the requested format.
+
+### Output schema
+
+Define `output` to declare the return shape:
+
+```ts
+cli.command('info', {
+  output: z.object({
+    name: z.string(),
+    version: z.string(),
+  }),
+  run() {
+    return { name: 'express', version: '4.21.2' }
+  },
+})
+```
+
+When `output` is provided, TypeScript enforces that `run()` returns the correct shape.
+
+### Formats
+
+Control with `--format <fmt>` or `--json`:
+
+| Flag            | Format   | Description                                  |
+| --------------- | -------- | -------------------------------------------- |
+| _(default)_     | TOON     | Token-efficient, ~40% fewer tokens than JSON |
+| `--format json` | JSON     | `JSON.parse()`-safe                          |
+| `--format yaml` | YAML     | Human-readable                               |
+| `--format md`   | Markdown | Tables for docs/issues                       |
+
+### Envelope
+
+With `--verbose`, the full envelope is emitted:
+
+```sh
+tool info express --verbose
+```
+
+```
+ok: true
+data:
+  name: express
+  version: 4.21.2
+meta:
+  command: info
+  duration: 12ms
+```
+
+Without `--verbose`, only `data` is emitted. On errors, only the `error` block is emitted.
+
+### TTY detection
+
+clac adapts output based on whether stdout is a TTY:
+
+| Scenario              | TTY (human)             | Non-TTY (agent/pipe) |
+| --------------------- | ----------------------- | -------------------- |
+| Command output        | Formatted data only     | TOON envelope        |
+| Errors                | Human-readable message  | Error envelope       |
+| `--help`              | Pretty help text        | Same                 |
+| `--json` / `--format` | Overrides to structured | Same                 |
+
+## Structured Errors
+
+### `ok()` and `error()` context helpers
+
+Use the context helpers for explicit result control:
+
+```ts
+run({ args, ok, error }) {
+  const item = await db.find(args.id)
+  if (!item)
+    return error({
+      code: 'NOT_FOUND',
+      message: `Item ${args.id} not found`,
+      retryable: false,
+    })
+  return ok(item)
+}
+```
+
+### CTAs (Call to Action)
+
+Suggest next commands to guide agents on success:
+
+```ts
+run({ args, ok }) {
+  const result = { id: 42, name: args.name }
+  return ok(result, {
+    cta: {
+      description: 'Suggested commands:',
+      commands: [
+        { command: 'get', args: { id: 42 }, description: 'View the item' },
+        'list',
+      ],
+    },
+  })
+}
+```
+
+Or on errors, to help agents self-correct:
+
+```ts
+run({ args, error }) {
+  const token = process.env.GH_TOKEN
+  if (!token)
+    return error({
+      code: 'NOT_AUTHENTICATED',
+      message: 'GitHub token not found',
+      retryable: true,
+      cta: {
+        description: 'To authenticate:',
+        commands: [
+          { command: 'auth login', description: 'Log in to GitHub' },
+          { command: 'config set', options: { token: true }, description: 'Set token manually' },
+        ],
+      },
+    })
+  // ...
+}
+```
+
+## Agent Discovery
+
+### `skills add` built-in command
+
+All clac-based CLIs can auto-generate and install agent skill files with `skills add`:
+
+```sh
+my-cli skills add
+```
+
+This generates Markdown skill files from your command definitions and installs them so agents discover your CLI automatically.
+
+#### Configuration
+
+It is also possible to configure `skills add`:
+
+```ts
+const cli = Cli.create('my-cli', {
+  sync: {
+    depth: 1,
+    include: ['_root'],
+    suggestions: ['install react as a dependency', 'check for outdated packages'],
+  },
+})
+```
+
+| Option        | Type       | Description                                                                                          |
+| ------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
+| `depth`       | `number`   | Grouping depth for skill files. `0` = single file, `1` = one per top-level command. Default: `1`     |
+| `include`     | `string[]` | Glob patterns for additional SKILL.md files to include. Use `'_root'` for the project-level SKILL.md |
+| `suggestions` | `string[]` | Example prompts shown after sync to help users get started                                           |
+
+### `--llms` flag
+
+Every clac CLI gets a built-in `--llms` flag that outputs a machine-readable manifest of all commands:
+
+```sh
+tool --llms
+```
+
+Outputs Markdown skill documentation by default.
+
+```md
+# tool install
+
+Install a package
+
+## Arguments
+
+| Name      | Type     | Required | Description             |
+| --------- | -------- | -------- | ----------------------- |
+| `package` | `string` | no       | Package name to install |
+
+## Options
+
+| Flag        | Type      | Default | Description            |
+| ----------- | --------- | ------- | ---------------------- |
+| `--saveDev` | `boolean` |         | Save as dev dependency |
+| `--global`  | `boolean` |         | Install globally       |
+```
+
+Use `--llms --format json` for JSON schema manifest:
+
+```json
+{
+  "version": "clac.v1",
+  "commands": [
+    {
+      "name": "install",
+      "description": "Install a package",
+      "schema": {
+        "args": { "type": "object", "properties": { "package": { "type": "string" } } },
+        "options": { "type": "object", "properties": { "saveDev": { "type": "boolean" } } },
+        "output": { "type": "object", "properties": { "added": { "type": "number" } } }
+      }
+    }
+  ]
+}
+```
+
+## Built-in Flags
+
+| Flag                 | Description                                  |
+| -------------------- | -------------------------------------------- |
+| `--help`, `-h`       | Show help for the CLI or a specific command  |
+| `--version`          | Print CLI version                            |
+| `--llms`             | Output agent-readable command manifest       |
+| `--json`             | Shorthand for `--format json`                |
+| `--format <fmt>`     | Output format: `toon`, `json`, `yaml`, `md`  |
+| `--verbose`          | Include full envelope (`ok`, `data`, `meta`) |
+| `--tty` / `--no-tty` | Override TTY detection                       |
+
+## Examples
+
+### Typed examples on commands
+
+```ts
+cli.command('deploy', {
+  args: z.object({ env: z.enum(['staging', 'production']) }),
+  options: z.object({ force: z.boolean().optional() }),
+  examples: [
+    { args: { env: 'staging' }, description: 'Deploy to staging' },
+    { args: { env: 'production' }, options: { force: true }, description: 'Force deploy to prod' },
+  ],
+  run({ args }) {
+    return { deployed: args.env }
+  },
+})
+```
+
+Examples appear in `--help` output and generated skill files.
+
+### Hints
+
+```ts
+cli.command('publish', {
+  hint: 'Requires NPM_TOKEN to be set in your environment.',
+  // ...
+})
+```
+
+Hints are displayed after examples in help output and included in skill files.
+
+## Serving
+
+Call `.serve()` to parse `process.argv` and run:
+
+```ts
+cli.serve()
+```
+
+For testing, pass custom argv and DI overrides:
+
+```ts
+let output = ''
+await cli.serve(['install', 'express', '--json'], {
+  stdout(s) {
+    output += s
+  },
+  exit() {},
+})
+```
+
+### `serve()` options
+
+| Option   | Type                                  | Description                    |
+| -------- | ------------------------------------- | ------------------------------ |
+| `stdout` | `(s: string) => void`                 | Override stdout writer         |
+| `exit`   | `(code: number) => void`              | Override exit handler          |
+| `env`    | `Record<string, string \| undefined>` | Override environment variables |
+| `tty`    | `boolean`                             | Override TTY detection         |
+
+## Type Generation
+
+Generate type definitions for your CLI's command map to get typed CTAs:
+
+```sh
+clac gen
+```
+
+This creates a `clac.generated.ts` file that registers your commands on the `Cli.Commands` type, enabling autocomplete on CTA command names, args, and options.
+
+## Full Example
+
+```ts
+import { Cli, z } from 'clac'
+
+const cli = Cli.create('npm', {
+  version: '10.9.2',
+  description: 'The package manager for JavaScript.',
+  sync: {
+    suggestions: ['install react as a dependency', 'check for outdated packages'],
+  },
+})
+
+cli.command('install', {
+  description: 'Install a package',
+  args: z.object({
+    package: z.string().optional().describe('Package name to install'),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe('Save as dev dependency'),
+    global: z.boolean().optional().describe('Install globally'),
+  }),
+  alias: { saveDev: 'D', global: 'g' },
+  output: z.object({
+    added: z.number().describe('Number of packages added'),
+    packages: z.number().describe('Total packages'),
+  }),
+  examples: [
+    { args: { package: 'express' }, description: 'Install a package' },
+    {
+      args: { package: 'vitest' },
+      options: { saveDev: true },
+      description: 'Install as dev dependency',
+    },
+  ],
+  run({ args }) {
+    if (!args.package) return { added: 120, packages: 450 }
+    return { added: 1, packages: 451 }
+  },
+})
+
+cli.command('outdated', {
+  description: 'Check for outdated packages',
+  options: z.object({
+    global: z.boolean().describe('Check global packages'),
+  }),
+  alias: { global: 'g' },
+  output: z.object({
+    packages: z.array(
+      z.object({
+        name: z.string(),
+        current: z.string(),
+        wanted: z.string(),
+        latest: z.string(),
+      }),
+    ),
+  }),
+  run() {
+    return {
+      packages: [{ name: 'express', current: '4.18.0', wanted: '4.21.2', latest: '4.21.2' }],
+    }
+  },
+})
+
+cli.serve()
+
+export default cli
+```
+
+> Always `export default cli` so that `clac gen` can import it and generate types.

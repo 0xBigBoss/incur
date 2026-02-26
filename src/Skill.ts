@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+
 import * as Schema from './Schema.js'
 
 /** Information about a single command, passed to `generate()`. */

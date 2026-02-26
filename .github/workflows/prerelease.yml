@@ -16,6 +16,6 @@ jobs:
         run: pnpm install
 
       - name: Prerelease
-        run: | 
+        run: |
           pnpm run build
           pnpx pkg-pr-new publish --pnpm

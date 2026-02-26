@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import url from 'node:url'
+
 import * as Cli from '../Cli.js'
 
 /**
@@ -38,7 +39,7 @@ async function resolveEntry(dir: string): Promise<string> {
   try {
     const pkg = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'))
     if (pkg.bin) {
-      const entries = typeof pkg.bin === 'string' ? [pkg.bin] : Object.values(pkg.bin) as string[]
+      const entries = typeof pkg.bin === 'string' ? [pkg.bin] : (Object.values(pkg.bin) as string[])
       const src = entries.find((e) => e.endsWith('.ts'))
       const entry = src ?? entries[0]
       if (entry) return path.join(dir, entry)

@@ -1,14 +1,16 @@
 import path from 'node:path'
 import { z } from 'zod'
+
 import * as Cli from './Cli.js'
 import * as Typegen from './Typegen.js'
 
 const cli = Cli.create('clac', {
   description: 'CLI for clac',
   sync: {
-    depth: 0,
-    suggestions: ['generate clac types'],
-  }
+    depth: 1,
+    include: ['_root'],
+    suggestions: ['build a cli with clac', 'generate clac types'],
+  },
 }).command('gen', {
   description: 'Generate type definitions for development.',
   options: z.object({

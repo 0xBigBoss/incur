@@ -3,7 +3,7 @@
     "build": "zile",
     "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
     "changeset:version": "changeset version",
-    "check": "biome check --fix --unsafe",
+    "check": "oxlint --fix --ignore-pattern package.json && oxfmt",
     "check:types": "tsc -b && pnpm -r check:types",
     "clac": "node --import tsx src/bin.ts",
     "cli:skills": "pnpm clac skills add",
@@ -11,9 +11,10 @@
     "test": "vitest"
   },
   "devDependencies": {
-    "@biomejs/biome": "latest",
     "@changesets/cli": "latest",
     "@types/node": "latest",
+    "oxfmt": "^0.35.0",
+    "oxlint": "^1.50.0",
     "tsx": "^4.21.0",
     "typescript": "latest",
     "vitest": "latest",

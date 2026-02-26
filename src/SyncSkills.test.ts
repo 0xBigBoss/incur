@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises'
 import { Cli, SyncSkills } from 'clac'
 
 let mockExecError: Error | null = null

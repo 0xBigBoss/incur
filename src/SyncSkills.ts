@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+
 import { formatExamples } from './Cli.js'
 import { detectRunner } from './internal/pm.js'
 import * as Skill from './Skill.js'
@@ -32,6 +33,28 @@ export async function sync(
       skills.push({ name: file.dir || name, description: descMatch?.[1] })
     }
 
+    // Include additional SKILL.md files matched by glob patterns
+    if (options.include) {
+      for (const pattern of options.include) {
+        const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
+        for await (const match of fs.glob(globPattern)) {
+          try {
+            const content = await fs.readFile(match, 'utf8')
+            const nameMatch = content.match(/^name:\s*(.+)$/m)
+            const skillName =
+              pattern === '_root' ? (nameMatch?.[1] ?? name) : path.basename(path.dirname(match))
+            const dest = path.join(tmpDir, skillName, 'SKILL.md')
+            await fs.mkdir(path.dirname(dest), { recursive: true })
+            await fs.writeFile(dest, content)
+            if (!skills.some((s) => s.name === skillName)) {
+              const descMatch = content.match(/^description:\s*(.+)$/m)
+              skills.push({ name: skillName, description: descMatch?.[1], external: true })
+            }
+          } catch {}
+        }
+      }
+    }
+
     const runner = options.runner ?? detectRunner()
     const [cmd, ...prefix] = runner.split(' ')
     const flags = ['--yes', ...(global ? ['--global'] : [])]
@@ -41,7 +64,12 @@ export async function sync(
     const paths = stdout
       .split('\n')
       .filter((l) => l.includes('✓'))
-      .map((l) => l.replace(/.*✓\s*/, '').replace(/[│┃|]/g, '').trim())
+      .map((l) =>
+        l
+          .replace(/.*✓\s*/, '')
+          .replace(/[│┃|]/g, '')
+          .trim(),
+      )
       .filter(Boolean)
 
     return { skills, paths }
@@ -59,6 +87,8 @@ export declare namespace sync {
     description?: string | undefined
     /** Install globally (`~/.config/agents/skills/`) instead of project-local. Defaults to `true`. */
     global?: boolean | undefined
+    /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
+    include?: string[] | undefined
     /** Override the package manager runner (e.g. `npx`, `pnpx`, `bunx`). Auto-detected if omitted. */
     runner?: string | undefined
   }
@@ -73,6 +103,8 @@ export declare namespace sync {
   type Skill = {
     /** Description extracted from the skill frontmatter. */
     description?: string | undefined
+    /** Whether this skill was included from a local file (not generated from commands). */
+    external?: boolean | undefined
     /** Skill directory name. */
     name: string
   }
