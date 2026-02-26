@@ -43,7 +43,7 @@ Cli.create('greet', {
 ```
 
 ```sh
-greet world
+$ greet world
 # → message: hello world
 ```
 
@@ -77,6 +77,15 @@ Cli.create('my-cli', {
   .serve()
 ```
 
+```sh
+$ my-cli status
+# → clean: true
+
+$ my-cli install express -D
+# → added: 1
+# → packages: 451
+```
+
 ### Sub-command CLI
 
 ```ts
@@ -96,7 +105,12 @@ const pr = Cli.create('pr', { description: 'Pull request commands' }).command('l
 cli
   .command(pr) // Link the `pr` group.
   .serve()
-// → gh pr list --state closed
+```
+
+```sh
+$ my-cli pr list --state closed
+# → prs: (empty)
+# → state: closed
 ```
 
 ### Agent discovery
