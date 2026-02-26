@@ -225,6 +225,8 @@ export declare namespace create {
     options?: options | undefined
     /** Zod schema for the return value. */
     output?: output | undefined
+    /** Alternative usage patterns shown in help output. */
+    usage?: Usage<args, options>[] | undefined
     /** The root command handler. When provided, creates a leaf CLI with no subcommands. */
     run?:
       | ((context: {
@@ -450,6 +452,7 @@ async function serveImpl(
           hint: resolved.command.hint,
           options: resolved.command.options,
           examples: formatExamples(resolved.command.examples),
+          usage: resolved.command.usage,
         }),
       )
     }
@@ -629,6 +632,7 @@ function formatHumanValidationError(
       hint: command.hint,
       options: command.options,
       examples: formatExamples(command.examples),
+      usage: command.usage,
     }),
   )
   return lines.join('\n')
@@ -985,6 +989,25 @@ type Example<
   options?: options extends z.ZodObject<any> ? Partial<z.output<options>> | undefined : undefined
 }
 
+/** @internal A usage pattern shown in help output. */
+type Usage<
+  args extends z.ZodObject<any> | undefined,
+  options extends z.ZodObject<any> | undefined,
+> = {
+  /** Positional arguments to include. Use `true` to show as `<name>`. */
+  args?: args extends z.ZodObject<any>
+    ? Partial<Record<keyof z.output<args>, true>> | undefined
+    : undefined
+  /** Named options to include. Use `true` to show as `--name <name>`. */
+  options?: options extends z.ZodObject<any>
+    ? Partial<Record<keyof z.output<options>, true>> | undefined
+    : undefined
+  /** Text prepended before the command (e.g. `"cat file.txt |"`). */
+  prefix?: string | undefined
+  /** Text appended after the command (e.g. `"| head"`). */
+  suffix?: string | undefined
+}
+
 /** @internal Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
 type InferOutput<schema extends z.ZodObject<any> | undefined> =
   schema extends z.ZodObject<any> ? z.output<schema> : {}
@@ -1062,6 +1085,8 @@ type CommandDefinition<
   options?: options | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
+  /** Alternative usage patterns shown in help output. */
+  usage?: Usage<args, options>[] | undefined
   /** The command handler. */
   run(context: {
     args: InferOutput<args>

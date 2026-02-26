@@ -55,6 +55,8 @@ export declare namespace formatCommand {
     hint?: string | undefined
     /** Zod schema for named options/flags. */
     options?: z.ZodObject<any> | undefined
+    /** Alternative usage patterns. */
+    usage?: { args?: Record<string, true>; options?: Record<string, true>; prefix?: string; suffix?: string }[] | undefined
   }
 }
 
@@ -68,8 +70,24 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   lines.push('')
 
   // Synopsis
-  const synopsis = buildSynopsis(name, args)
-  lines.push(`Usage: ${synopsis}${opts ? ' [options]' : ''}`)
+  const { usage } = options
+  if (usage && usage.length > 0) {
+    const usageLines = usage.map((u) => {
+      const parts: string[] = []
+      if (u.prefix) parts.push(u.prefix)
+      parts.push(name)
+      if (u.args) for (const key of Object.keys(u.args)) parts.push(`<${key}>`)
+      if (u.options) for (const key of Object.keys(u.options)) parts.push(`--${key} <${key}>`)
+      if (u.suffix) parts.push(u.suffix)
+      return parts.join(' ')
+    })
+    const pad = ' '.repeat('Usage: '.length)
+    lines.push(`Usage: ${usageLines[0]}`)
+    for (const line of usageLines.slice(1)) lines.push(`${pad}${line}`)
+  } else {
+    const synopsis = buildSynopsis(name, args)
+    lines.push(`Usage: ${synopsis}${opts ? ' [options]' : ''}`)
+  }
 
   // Arguments
   if (args) {
