@@ -569,7 +569,7 @@ Hints are displayed after examples in help output and included in skill files.
 
 ### Output policy
 
-Control whether output data is displayed to TTY consumers. `'all'` (default) shows output to everyone. `'agent-only'` suppresses data in human/TTY mode while still returning it via `--json`, `--format`, or `--verbose`.
+Control whether output data is displayed to humans. `'all'` (default) shows output to everyone. `'agent-only'` suppresses data in human/TTY mode while still returning it via `--json`, `--format`, or `--verbose`.
 
 ```ts
 cli.command('deploy', {
