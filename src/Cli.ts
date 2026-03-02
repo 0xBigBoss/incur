@@ -15,6 +15,7 @@ import * as Schema from './Schema.js'
 import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
+import * as Update from './Update.js'
 
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<
@@ -218,6 +219,7 @@ export function create(
         outputPolicy: def.outputPolicy,
         rootCommand: rootDef,
         sync: def.sync,
+        update: def.update,
         vars: def.vars,
         version: def.version,
       })
@@ -326,6 +328,15 @@ export declare namespace create {
           suggestions?: string[] | undefined
         }
       | undefined
+    /** Options for the built-in `update` command and version staleness check. Requires `version` to be set. */
+    update?:
+      | {
+          /** Check interval in milliseconds. Defaults to 24 hours (86400000). */
+          interval?: number | undefined
+          /** npm registry URL. Defaults to `https://registry.npmjs.org`. */
+          registry?: string | undefined
+        }
+      | undefined
     /** The CLI version string. */
     version?: string | undefined
   }
@@ -362,6 +373,7 @@ async function serveImpl(
     mcp: mcpFlag,
     help,
     version,
+    noUpdateCheck,
     rest: filtered,
   } = extractBuiltinFlags(argv)
 
@@ -383,7 +395,9 @@ async function serveImpl(
     const isSkillsAdd =
       filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
     const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
-    if (!isSkillsAdd && !isMcpAdd) {
+    const isUpdate =
+      filtered[0] === 'update' || (filtered[0] === name && filtered[1] === 'update')
+    if (!isSkillsAdd && !isMcpAdd && !isUpdate) {
       const stored = SyncSkills.readHash(name)
       if (stored) {
         const groups = new Map<string, string>()
@@ -397,6 +411,28 @@ async function serveImpl(
         }
       }
     }
+  }
+
+  // Non-blocking version staleness check
+  if (
+    options.update &&
+    options.version &&
+    !noUpdateCheck &&
+    !process.env.NO_UPDATE_CHECK &&
+    !llms &&
+    !help &&
+    !version
+  ) {
+    const runner = detectRunner()
+    const spec = SyncMcp.detectPackageSpecifier(name)
+    Update.check(name, options.version, options.update)
+      .then((latest) => {
+        if (latest)
+          process.stderr.write(
+            `⚠ Update available: ${options.version} → ${latest}. Run '${runner} ${spec} update' to update.\n\n`,
+          )
+      })
+      .catch(() => {})
   }
 
   if (llms) {
@@ -564,6 +600,67 @@ async function serveImpl(
       writeln(
         Formatter.format(
           { code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) },
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      exit(1)
+    }
+    return
+  }
+
+  // update: check for and install latest version
+  const updateIdx =
+    filtered[0] === 'update' ? 0 : filtered[0] === name && filtered[1] === 'update' ? 1 : -1
+  if (updateIdx !== -1 && filtered[updateIdx] === 'update' && options.update && options.version) {
+    if (help) {
+      writeln(
+        [
+          `${name} update — Update to the latest version`,
+          '',
+          `Usage: ${name} update`,
+        ].join('\n'),
+      )
+      return
+    }
+    try {
+      stdout('Checking for updates...')
+      const latest = await Update.check(name, options.version, {
+        ...options.update,
+        interval: 0, // always check
+      })
+      if (!latest) {
+        stdout('\r\x1b[K')
+        writeln(`Already on the latest version (${options.version}).`)
+        return
+      }
+      stdout(`\r\x1b[KUpdating ${options.version} → ${latest}...`)
+      await Update.update(name)
+      stdout('\r\x1b[K')
+      const lines: string[] = []
+      lines.push(`✓ Updated ${name} ${options.version} → ${latest}`)
+
+      // Re-sync skills if previously synced
+      const storedHash = SyncSkills.readHash(name)
+      if (storedHash) {
+        const runner = detectRunner()
+        const spec = SyncMcp.detectPackageSpecifier(name)
+        lines.push('')
+        lines.push(`Run '${runner} ${spec} skills add' to re-sync skills.`)
+      }
+
+      writeln(lines.join('\n'))
+      if (verbose || formatExplicit)
+        writeln(
+          Formatter.format(
+            { from: options.version, to: latest },
+            formatExplicit ? formatFlag : 'toon',
+          ),
+        )
+    } catch (err) {
+      stdout('\r\x1b[K')
+      writeln(
+        Formatter.format(
+          { code: 'UPDATE_FAILED', message: err instanceof Error ? err.message : String(err) },
           formatExplicit ? formatFlag : 'toon',
         ),
       )
@@ -1006,19 +1103,27 @@ declare namespace serveImpl {
           suggestions?: string[] | undefined
         }
       | undefined
+    /** Update check options. */
+    update?:
+      | {
+          interval?: number | undefined
+          registry?: string | undefined
+        }
+      | undefined
     /** Zod schema for middleware variables. */
     vars?: z.ZodObject<any> | undefined
     version?: string | undefined
   }
 }
 
-/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version, --no-update-check) from argv. */
 function extractBuiltinFlags(argv: string[]) {
   let verbose = false
   let llms = false
   let mcp = false
   let help = false
   let version = false
+  let noUpdateCheck = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
   const rest: string[] = []
@@ -1030,6 +1135,7 @@ function extractBuiltinFlags(argv: string[]) {
     else if (token === '--mcp') mcp = true
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
+    else if (token === '--no-update-check') noUpdateCheck = true
     else if (token === '--json') {
       format = 'json'
       formatExplicit = true
@@ -1040,7 +1146,7 @@ function extractBuiltinFlags(argv: string[]) {
     } else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, llms, mcp, help, version, rest }
+  return { verbose, format, formatExplicit, llms, mcp, help, version, noUpdateCheck, rest }
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
