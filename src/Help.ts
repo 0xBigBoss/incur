@@ -56,6 +56,8 @@ export declare namespace formatCommand {
     description?: string | undefined
     /** Zod schema for environment variables. */
     env?: z.ZodObject<any> | undefined
+    /** Override environment variable source for "set:" display. Defaults to `process.env`. */
+    envSource?: Record<string, string | undefined> | undefined
     /** Formatted usage examples. */
     examples?: { command: string; description?: string }[] | undefined
     /** Plain text hint displayed after examples and before global options. */
@@ -86,6 +88,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     version,
     args,
     env,
+    envSource,
     hint,
     root = false,
     options: opts,
@@ -197,10 +200,10 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
       for (const entry of entries) {
         const padding = ' '.repeat(maxLen - entry.name.length)
         const parts: string[] = [entry.description]
-        if (entry.name in process.env) parts.push(`set: ${redact(process.env[entry.name]!)}`)
+        const source = envSource ?? process.env
+        if (entry.name in source) parts.push(`set: ${redact(source[entry.name]!)}`)
         if (entry.defaultValue !== undefined) parts.push(`default: ${entry.defaultValue}`)
-        const desc =
-          parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]
+        const desc = parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]
         lines.push(`  ${entry.name}${padding}  ${desc}`)
       }
     }

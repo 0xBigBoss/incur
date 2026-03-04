@@ -594,6 +594,7 @@ async function serveImpl(
           version: options.version,
           args: cmd.args,
           env: cmd.env,
+          envSource: options.env,
           hint: cmd.hint,
           options: cmd.options,
           examples: formatExamples(cmd.examples),
@@ -642,6 +643,7 @@ async function serveImpl(
             version: options.version,
             args: cmd.args,
             env: cmd.env,
+            envSource: options.env,
             hint: cmd.hint,
             options: cmd.options,
             examples: formatExamples(cmd.examples),
@@ -674,6 +676,7 @@ async function serveImpl(
           version: isRootCmd ? options.version : undefined,
           args: resolved.command.args,
           env: resolved.command.env,
+          envSource: options.env,
           hint: resolved.command.hint,
           options: resolved.command.options,
           examples: formatExamples(resolved.command.examples),
@@ -949,7 +952,7 @@ async function serveImpl(
     }
 
     if (human && !formatExplicit && error instanceof ValidationError) {
-      writeln(formatHumanValidationError(name, path, command, error))
+      writeln(formatHumanValidationError(name, path, command, error, options.env))
       exit(1)
       return
     }
@@ -965,6 +968,7 @@ function formatHumanValidationError(
   path: string,
   command: CommandDefinition<any, any, any>,
   error: ValidationError,
+  envSource?: Record<string, string | undefined>,
 ): string {
   const lines: string[] = []
   for (const fe of error.fieldErrors) lines.push(`Error: missing required argument <${fe.path}>`)
@@ -976,6 +980,7 @@ function formatHumanValidationError(
       description: command.description,
       args: command.args,
       env: command.env,
+      envSource,
       hint: command.hint,
       options: command.options,
       examples: formatExamples(command.examples),

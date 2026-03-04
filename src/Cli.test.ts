@@ -1516,11 +1516,36 @@ describe('env', () => {
       // Both set and default shown together
       process.env.API_URL = 'https://custom.example.com'
       const { output: output2 } = await serve(cli, ['deploy', '--help'])
-      expect(output2).toContain('API_URL    API URL (set: ••••com, default: https://api.example.com)')
+      expect(output2).toContain(
+        'API_URL    API URL (set: ••••com, default: https://api.example.com)',
+      )
     } finally {
       delete process.env.API_TOKEN
       delete process.env.API_URL
     }
+  })
+
+  test('--help respects env source override for set display', async () => {
+    const cli = Cli.create('test')
+    cli.command('deploy', {
+      env: z.object({
+        API_TOKEN: z.string().describe('Auth token'),
+      }),
+      run() {
+        return {}
+      },
+    })
+
+    // When env source override does not include the var, "set:" should not appear
+    const { output } = await serve(cli, ['deploy', '--help'], { env: {} })
+    expect(output).toContain('API_TOKEN  Auth token')
+    expect(output).not.toContain('set:')
+
+    // When env source override includes the var, "set:" should appear
+    const { output: output2 } = await serve(cli, ['deploy', '--help'], {
+      env: { API_TOKEN: 'secret' },
+    })
+    expect(output2).toContain('set: ••••ret')
   })
 
   test('--llms json includes schema.env', async () => {
