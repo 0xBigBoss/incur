@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 
+import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
 import * as Formatter from './Formatter.js'
@@ -371,6 +372,24 @@ async function serveImpl(
     return
   }
 
+  // COMPLETE: dynamic shell completions (called by shell hook at tab-press)
+  const completeShell = process.env.COMPLETE as Completions.Shell | undefined
+  if (completeShell) {
+    // Remove separator `--` from argv
+    const sepIdx = argv.indexOf('--')
+    const words = sepIdx !== -1 ? argv.slice(sepIdx + 1) : argv
+    if (words.length === 0) {
+      // Registration mode: print shell hook script
+      stdout(Completions.register(completeShell, name))
+    } else {
+      const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
+      const candidates = Completions.complete(commands, options.rootCommand, words, index)
+      const out = Completions.format(completeShell, candidates)
+      if (out) stdout(out)
+    }
+    return
+  }
+
   // Human mode: stdout is a TTY.
   const human = process.stdout.isTTY === true
 
@@ -424,6 +443,65 @@ async function serveImpl(
       return
     }
     writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+    return
+  }
+
+  // completions <shell>: print shell hook script to stdout
+  const completionsIdx = (() => {
+    // e.g. `completions bash`
+    if (filtered[0] === 'completions') return 0
+    // e.g. `my-cli completions bash`
+    if (filtered[0] === name && filtered[1] === 'completions') return 1
+    // not a completions invocation
+    return -1
+  })()
+  if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
+    if (help) {
+      writeln(
+        [
+          `${name} completions — Generate shell completion script`,
+          '',
+          `Usage: ${name} completions <shell>`,
+          '',
+          'Shells:',
+          '  bash',
+          '  fish',
+          '  nushell',
+          '  zsh',
+          '',
+          'Setup:',
+          ...(() => {
+            const rows = [
+              ['bash', `eval "$(${name} completions bash)"`, '# add to ~/.bashrc'],
+              ['zsh', `eval "$(${name} completions zsh)"`, '# add to ~/.zshrc'],
+              ['fish', `${name} completions fish | source`, '# add to ~/.config/fish/config.fish'],
+              ['nushell', `see \`${name} completions nushell\``, '# add to config.nu'],
+            ]
+            const shellW = Math.max(...rows.map((r) => r[0]!.length))
+            const cmdW = Math.max(...rows.map((r) => r[1]!.length))
+            return rows.map(
+              ([shell, cmd, comment]) =>
+                `  ${shell!.padEnd(shellW)}  ${cmd!.padEnd(cmdW)}  ${comment}`,
+            )
+          })(),
+        ].join('\n'),
+      )
+      return
+    }
+    const shell = filtered[completionsIdx + 1]
+    if (!shell || !['bash', 'fish', 'nushell', 'zsh'].includes(shell)) {
+      writeln(
+        formatHumanError({
+          code: 'INVALID_SHELL',
+          message: shell
+            ? `Unknown shell '${shell}'. Supported: bash, fish, nushell, zsh`
+            : `Missing shell argument. Usage: ${name} completions <bash|fish|nushell|zsh>`,
+        }),
+      )
+      exit(1)
+      return
+    }
+    writeln(Completions.register(shell as Completions.Shell, name))
     return
   }
 
