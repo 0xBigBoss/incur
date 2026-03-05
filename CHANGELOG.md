@@ -1,5 +1,11 @@
 # incur
 
+## 0.2.1
+
+### Patch Changes
+
+- 6ab9a33: Added `--filter-output` global option to filter output by key paths with support for dot notation and array slicing.
+
 ## 0.2.0
 
 ### Minor Changes
