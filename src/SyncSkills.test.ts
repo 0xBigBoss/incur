@@ -122,6 +122,47 @@ test('installed SKILL.md contains frontmatter', async () => {
   const content = readFileSync(join(skillPath, 'SKILL.md'), 'utf8')
   expect(content).toContain('name:')
   expect(content).toContain('description:')
+  expect(content).toContain('bins: ["my-tool"]')
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('writes CONTEXT.md from context rules', async () => {
+  const tmp = join(tmpdir(), `clac-context-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('my-tool', {
+    description: 'A useful tool',
+    contextRules: [
+      'Always use --dry-run for mutating operations.',
+      'Confirm with the user before destructive commands.',
+    ],
+  })
+  cli.command('destroy', {
+    description: 'Destroy a resource',
+    mutates: true,
+    destructive: true,
+    run: () => ({}),
+  })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  await SyncSkills.sync('my-tool', commands, {
+    description: 'A useful tool',
+    global: false,
+    cwd: installDir,
+    contextRules: [
+      'Always use --dry-run for mutating operations.',
+      'Confirm with the user before destructive commands.',
+    ],
+  })
+
+  const context = readFileSync(join(installDir, 'CONTEXT.md'), 'utf8')
+  expect(context).toContain('Always use --dry-run for mutating operations.')
+  expect(context).toContain('Confirm with the user before destructive commands.')
+  expect(context).toContain('destroy')
 
   rmSync(tmp, { recursive: true, force: true })
 })

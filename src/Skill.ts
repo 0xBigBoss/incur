@@ -88,16 +88,43 @@ function renderGroup(
   const descParts: string[] = []
   if (groupDesc) descParts.push(groupDesc.replace(/\.$/, ''))
   if (childDescs.length > 0) descParts.push(childDescs.join(', '))
-  const description = descParts.join('. ') || undefined
+  const description =
+    descParts.length > 0
+      ? `${descParts.join('. ')}. Run \`${title} --help\` for usage details.`
+      : `Run \`${title} --help\` for usage details.`
 
   const slug = title.replace(/\s+/g, '-')
   const fm = ['---', `name: ${slug}`]
-  if (description)
-    fm.push(`description: ${description}. Run \`${title} --help\` for usage details.`)
+  fm.push(`description: ${description}`)
+  fm.push('metadata:')
+  fm.push('  openclaw:')
+  fm.push('    requires:')
+  fm.push(`      bins: ["${cli}"]`)
   fm.push(`command: ${title}`, '---')
 
   const body = cmds.map((cmd) => renderCommandBody(cli, cmd)).join('\n\n---\n\n')
   return `${fm.join('\n')}\n\n${body}`
+}
+
+/** Generates a CLI-level agent context file from rules and command names. */
+export function generateContext(
+  name: string,
+  commands: CommandInfo[],
+  rules: string[] = [],
+): string {
+  const lines = [`# ${name} Context`, '']
+
+  if (rules.length > 0) {
+    lines.push('## Rules')
+    lines.push('')
+    for (const rule of rules) lines.push(`- ${rule}`)
+    lines.push('')
+  }
+
+  lines.push('## Commands')
+  lines.push('')
+  for (const command of commands) lines.push(`- ${command.name}`)
+  return lines.join('\n')
 }
 
 /** @internal Renders a command's heading and sections without frontmatter. */

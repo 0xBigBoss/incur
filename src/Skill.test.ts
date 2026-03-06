@@ -55,6 +55,30 @@ test('includes options table', () => {
   `)
 })
 
+test('group frontmatter includes required binary metadata', () => {
+  const files = Skill.split(
+    'gh',
+    [{ name: 'auth login', description: 'Log in' }],
+    1,
+    new Map([['auth', 'Authenticate']]),
+  )
+
+  expect(files[0]!.content).toContain('requires:')
+  expect(files[0]!.content).toContain('bins: ["gh"]')
+})
+
+test('destructive commands include a confirmation warning', () => {
+  const result = Skill.generate('test', [
+    {
+      name: 'delete',
+      description: 'Delete a resource',
+      hint: 'Confirm with the user before executing this destructive command.',
+    },
+  ])
+
+  expect(result).toContain('Confirm with the user before executing this destructive command.')
+})
+
 test('prepends **Deprecated.** to deprecated option descriptions', () => {
   const result = Skill.generate('test', [
     {
@@ -218,6 +242,10 @@ describe('split', () => {
       "---
       name: gh-auth
       description: Authenticate with GitHub. Log in, Check status. Run \`gh auth --help\` for usage details.
+      metadata:
+        openclaw:
+          requires:
+            bins: ["gh"]
       command: gh auth
       ---
 
@@ -235,6 +263,10 @@ describe('split', () => {
       "---
       name: gh-pr
       description: Manage pull requests. List PRs, Create PR. Run \`gh pr --help\` for usage details.
+      metadata:
+        openclaw:
+          requires:
+            bins: ["gh"]
       command: gh pr
       ---
 
@@ -294,9 +326,11 @@ describe('split', () => {
     expect(files[0]!.content).toContain('Run `gh auth login --help` for usage details.')
   })
 
-  test('omits --help hint when no descriptions exist', () => {
+  test('emits a fallback description when no descriptions exist', () => {
     const files = Skill.split('test', [{ name: 'ping' }], 1)
-    expect(files[0]!.content).not.toContain('--help')
+    expect(files[0]!.content).toContain(
+      'description: Run `test ping --help` for usage details.',
+    )
   })
 
   test('no per-command frontmatter in split files', () => {

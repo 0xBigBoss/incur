@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import * as Cli from './Cli.js'
 import { formatExamples } from './Cli.js'
 import * as Agents from './internal/agents.js'
 import * as Skill from './Skill.js'
@@ -14,7 +15,7 @@ export async function sync(
   options: sync.Options = {},
 ): Promise<sync.Result> {
   const cwd = options.cwd ?? resolvePackageRoot()
-  const { depth = 1, description, global = true } = options
+  const { contextRules = [], depth = 1, description, global = true } = options
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
@@ -33,6 +34,9 @@ export async function sync(
       const descMatch = file.content.match(/^description:\s*(.+)$/m)
       skills.push({ name: file.dir || name, description: descMatch?.[1] })
     }
+
+    const context = Skill.generateContext(name, entries, contextRules)
+    await fs.writeFile(path.join(cwd, 'CONTEXT.md'), `${context}\n`)
 
     // Include additional SKILL.md files matched by glob patterns
     if (options.include) {
@@ -87,6 +91,8 @@ export declare namespace sync {
     depth?: number | undefined
     /** CLI description, used as the top-level group description. */
     description?: string | undefined
+    /** Rules to include in the generated CONTEXT.md file. */
+    contextRules?: string[] | undefined
     /** Install globally (`~/.config/agents/skills/`) instead of project-local. Defaults to `true`. */
     global?: boolean | undefined
     /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
@@ -130,8 +136,17 @@ function collectEntries(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
-      if (entry.options) cmd.options = entry.options
+      const effectiveOptions = Cli.getCommandOptionsSchema(entry)
+      if (effectiveOptions) cmd.options = effectiveOptions
       if (entry.output) cmd.output = entry.output
+      if (entry.mutates)
+        cmd.hint = [cmd.hint, 'Use `--dry-run` before executing this mutating command.']
+          .filter(Boolean)
+          .join(' ')
+      if (entry.destructive)
+        cmd.hint = [cmd.hint, 'Confirm with the user before executing this destructive command.']
+          .filter(Boolean)
+          .join(' ')
       const examples = formatExamples(entry.examples)
       if (examples) {
         const cmdName = entryPath.join(' ')
