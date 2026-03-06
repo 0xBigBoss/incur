@@ -137,6 +137,29 @@ describe('cli integration', () => {
     const { exitCode } = await serve(createCli(), ['api', 'getUser'])
     expect(exitCode).toBe(1)
   })
+
+  test('schema built-in returns runtime OpenAPI metadata for an operation', async () => {
+    const { output } = await serve(createCli(), ['schema', 'api', 'getUser', '--format', 'json'])
+    expect(json(output)).toMatchObject({
+      name: 'api getUser',
+      openapi: {
+        operationId: 'getUser',
+        httpMethod: 'GET',
+        path: '/users/{id}',
+        response: {
+          type: 'object',
+        },
+      },
+      schema: {
+        args: {
+          type: 'object',
+          properties: {
+            id: { type: 'number' },
+          },
+        },
+      },
+    })
+  })
 })
 
 describe('@hono/zod-openapi integration', () => {
