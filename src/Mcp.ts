@@ -2,6 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Readable, Writable } from 'node:stream'
 
+import {
+  getEffectiveOptionsSchema,
+  resolveCommandOptions,
+} from './CommandOptions.js'
+import * as Sanitize from './Sanitize.js'
 import * as Schema from './Schema.js'
 
 /** Starts a stdio MCP server that exposes commands as tools. */
@@ -14,9 +19,10 @@ export async function serve(
   const server = new McpServer({ name, version })
 
   for (const tool of collectTools(commands, [])) {
+    const optionsSchema = getEffectiveOptionsSchema(tool.command)
     const mergedShape: Record<string, any> = {
       ...tool.command.args?.shape,
-      ...tool.command.options?.shape,
+      ...optionsSchema?.shape,
     }
     const hasInput = Object.keys(mergedShape).length > 0
 
@@ -30,7 +36,7 @@ export async function serve(
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
         const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
         const extra = hasInput ? callArgs[1] : callArgs[0]
-        return callTool(tool, params, extra)
+        return callTool(tool, params, extra, options.sanitize)
       },
     )
   }
@@ -48,6 +54,14 @@ export declare namespace serve {
     input?: Readable | undefined
     /** Override output stream. Defaults to `process.stdout`. */
     output?: Writable | undefined
+    /** Sanitizes tool output before it is returned to the agent. */
+    sanitize?:
+      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
   }
 }
 
@@ -59,11 +73,23 @@ export async function callTool(
     _meta?: { progressToken?: string | number }
     sendNotification?: (n: any) => Promise<void>
   },
+  sanitize?:
+    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+        output: unknown
+        blocked: boolean
+        warnings?: string[] | undefined
+      }>)
+    | undefined,
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
   try {
     const { args, options } = splitParams(params, tool.command)
     const parsedArgs = tool.command.args ? tool.command.args.parse(args) : {}
-    const parsedOptions = tool.command.options ? tool.command.options.parse(options) : {}
+    const optionsSchema = getEffectiveOptionsSchema(tool.command)
+    const parsedOptions = optionsSchema ? optionsSchema.parse(options) : {}
+    const { control, options: resolvedOptions } = resolveCommandOptions(
+      tool.command,
+      parsedOptions as Record<string, unknown>,
+    )
     const parsedEnv = tool.command.env ? tool.command.env.parse(process.env) : {}
 
     const sentinel = Symbol.for('incur.sentinel')
@@ -72,9 +98,12 @@ export async function callTool(
       ({ [sentinel]: 'error', ...opts }) as never
 
     const raw = tool.command.run({
+      agent: true,
       args: parsedArgs,
+      dryRun: control.dryRun,
       env: parsedEnv,
-      options: parsedOptions,
+      name: tool.name,
+      options: resolvedOptions,
       ok: okFn,
       error: errorFn,
     })
@@ -100,7 +129,7 @@ export async function callTool(
             params: { progressToken, progress: ++i, message: JSON.stringify(chunk) },
           })
       }
-      return { content: [{ type: 'text', text: JSON.stringify(chunks) }] }
+      return renderToolResult(chunks, tool.name, sanitize)
     }
 
     const awaited = await raw
@@ -112,10 +141,10 @@ export async function callTool(
           content: [{ type: 'text', text: tagged.message ?? 'Command failed' }],
           isError: true,
         }
-      return { content: [{ type: 'text', text: JSON.stringify(tagged.data ?? null) }] }
+      return renderToolResult(tagged.data ?? null, tool.name, sanitize)
     }
 
-    return { content: [{ type: 'text', text: JSON.stringify(awaited ?? null) }] }
+    return renderToolResult(awaited ?? null, tool.name, sanitize)
   } catch (err) {
     return {
       content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
@@ -151,8 +180,8 @@ export function collectTools(commands: Map<string, any>, prefix: string[]): Tool
     else {
       result.push({
         name: path.join('_'),
-        description: entry.description,
-        inputSchema: buildToolSchema(entry.args, entry.options),
+        description: formatDescription(entry),
+        inputSchema: buildToolSchema(entry.args, getEffectiveOptionsSchema(entry)),
         command: entry,
       })
     }
@@ -192,4 +221,48 @@ function splitParams(
     else o[key] = value
   }
   return { args: a, options: o }
+}
+
+function formatDescription(command: any): string | undefined {
+  if (!command.description) return command.destructive
+    ? 'confirm with user before executing'
+    : undefined
+  if (command.destructive)
+    return `${command.description}. confirm with user before executing`
+  return command.description
+}
+
+async function renderToolResult(
+  value: unknown,
+  command: string,
+  sanitize:
+    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+        output: unknown
+        blocked: boolean
+        warnings?: string[] | undefined
+      }>)
+    | undefined,
+) {
+  const result = await Sanitize.sanitize(value, { command, agent: true }, sanitize)
+  if (result.blocked) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            code: 'SANITIZED_OUTPUT_BLOCKED',
+            message: 'Command output was blocked by sanitization',
+            ...(result.warnings ? { warnings: result.warnings } : undefined),
+          }),
+        },
+      ],
+      isError: true,
+    }
+  }
+
+  const payload =
+    result.warnings && result.warnings.length > 0 && value && typeof result.output === 'object'
+      ? { ...(result.output as Record<string, unknown>), _warnings: result.warnings }
+      : result.output
+  return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
 }

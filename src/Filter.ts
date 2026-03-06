@@ -80,6 +80,13 @@ export function apply(data: unknown, paths: FilterPath[]): unknown {
   return result
 }
 
+/** Returns warnings for filter paths that do not exist in a JSON Schema. */
+export function validate(paths: FilterPath[], schema: Record<string, unknown>): string[] {
+  return paths
+    .filter((path) => !matchesSchema(schema, path))
+    .map((path) => `Unknown field: ${formatPath(path)}`)
+}
+
 function resolve(data: unknown, segments: Segment[], index: number): unknown {
   if (index >= segments.length) return data
   const segment = segments[index]!
@@ -128,6 +135,19 @@ function merge(target: Record<string, unknown>, data: unknown, segments: Segment
     }
 
     // Next segment is a key — recurse into nested object
+    if (Array.isArray(val)) {
+      const existing = Array.isArray(target[segment.key]) ? (target[segment.key] as unknown[]) : []
+      target[segment.key] = val.map((item, itemIndex) => {
+        const sub =
+          existing[itemIndex] && typeof existing[itemIndex] === 'object'
+            ? { ...(existing[itemIndex] as Record<string, unknown>) }
+            : {}
+        merge(sub, item, segments, index + 1)
+        return sub
+      })
+      return
+    }
+
     if (typeof val !== 'object' || val === null) return
     if (!target[segment.key] || typeof target[segment.key] !== 'object')
       target[segment.key] = {}
@@ -136,4 +156,44 @@ function merge(target: Record<string, unknown>, data: unknown, segments: Segment
   }
 
   // slice at root level — shouldn't happen in merge (merge starts from object keys)
+}
+
+function matchesSchema(schema: Record<string, unknown> | undefined, path: FilterPath): boolean {
+  if (!schema) return true
+  return walkSchema(schema, path, 0)
+}
+
+function walkSchema(
+  schema: Record<string, unknown> | undefined,
+  path: FilterPath,
+  index: number,
+): boolean {
+  if (!schema) return false
+  if (index >= path.length) return true
+
+  const segment = path[index]!
+  const type = schema.type as string | undefined
+
+  if ('start' in segment) {
+    if (type !== 'array') return false
+    return walkSchema(schema.items as Record<string, unknown> | undefined, path, index + 1)
+  }
+
+  if (type === 'array')
+    return walkSchema(schema.items as Record<string, unknown> | undefined, path, index)
+
+  if (type !== 'object') return false
+  const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
+  const prop = properties?.[segment.key]
+  if (!prop) return false
+  return walkSchema(prop, path, index + 1)
+}
+
+function formatPath(path: FilterPath): string {
+  return path
+    .map((segment) =>
+      'key' in segment ? segment.key : `[${segment.start},${segment.end}]`,
+    )
+    .join('.')
+    .replace('.[', '[')
 }
