@@ -57,6 +57,49 @@ function createTestCommands() {
     },
   })
 
+  commands.set('destroy', {
+    description: 'Delete everything',
+    destructive: true,
+    mutates: true,
+    run() {
+      return { ok: true }
+    },
+  })
+
+  commands.set('deploy', {
+    description: 'Deploy a service',
+    body: z.object({
+      region: z.string(),
+      replicas: z.number().default(1),
+    }),
+    options: z.object({
+      region: z.string().optional(),
+      replicas: z.number().default(1),
+    }),
+    run(c: any) {
+      return c.options
+    },
+  })
+
+  const issueUpdateInput = z.object({
+    id: z.string(),
+    input: z.object({
+      email: z.string().optional(),
+    }),
+  })
+
+  commands.set('issue-update', {
+    args: z.object({ id: z.string() }),
+    description: 'Update an issue with a mixed scalar and input payload',
+    input: issueUpdateInput,
+    options: z.object({
+      id: z.string().optional(),
+    }),
+    run(c: any) {
+      return issueUpdateInput.parse({ ...c.options, ...c.args })
+    },
+  })
+
   return commands
 }
 
@@ -109,13 +152,26 @@ describe('Mcp', () => {
       { id: 2, method: 'tools/list', params: {} },
     ])
     const names = res.result.tools.map((t: any) => t.name).sort()
-    expect(names).toEqual(['echo', 'fail', 'greet_hello', 'ping', 'stream'])
+    expect(names).toEqual([
+      'deploy',
+      'destroy',
+      'echo',
+      'fail',
+      'greet_hello',
+      'issue_update',
+      'ping',
+      'stream',
+    ])
 
     const echoTool = res.result.tools.find((t: any) => t.name === 'echo')
     expect(echoTool.description).toBe('Echo a message')
     expect(echoTool.inputSchema.properties.message).toBeDefined()
     expect(echoTool.inputSchema.properties.upper).toBeDefined()
     expect(echoTool.inputSchema.required).toContain('message')
+
+    const destroyTool = res.result.tools.find((t: any) => t.name === 'destroy')
+    expect(destroyTool.description).toContain('confirm with user before executing')
+    expect(destroyTool.inputSchema.properties.dryRun).toBeDefined()
   })
 
   test('notifications are ignored (no response)', async () => {
@@ -214,6 +270,48 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([
       { type: 'text', text: '[{"content":"hello"},{"content":"world"}]' },
     ])
+  })
+
+  test('tools/call resolves injected json payload through shared option parsing', async () => {
+    const [, res] = await mcpSession(createTestCommands(), [
+      { id: 1, method: 'initialize', params: initParams },
+      {
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'deploy',
+          arguments: { json: '{"region":"us-central1","replicas":3}' },
+        },
+      },
+    ])
+    expect({
+      type: res.result.content[0].type,
+      data: JSON.parse(res.result.content[0].text),
+    }).toEqual({
+      type: 'text',
+      data: { region: 'us-central1', replicas: 3 },
+    })
+  })
+
+  test('tools/call merges json payload with scalar args for input commands', async () => {
+    const [, res] = await mcpSession(createTestCommands(), [
+      { id: 1, method: 'initialize', params: initParams },
+      {
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'issue_update',
+          arguments: { id: 'ISS-1', json: '{"input":{"email":"issue@example.com"}}' },
+        },
+      },
+    ])
+    expect({
+      type: res.result.content[0].type,
+      data: JSON.parse(res.result.content[0].text),
+    }).toEqual({
+      type: 'text',
+      data: { id: 'ISS-1', input: { email: 'issue@example.com' } },
+    })
   })
 
   test('streaming command sends progress notifications', async () => {

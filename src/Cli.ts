@@ -1,6 +1,10 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
+import {
+  getEffectiveOptionsSchema,
+  resolveCommandOptions,
+} from './CommandOptions.js'
 import * as Completions from './Completions.js'
 import * as Filter from './Filter.js'
 import type { FieldError } from './Errors.js'
@@ -16,6 +20,7 @@ import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from 
 export type { MiddlewareHandler }
 import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
+import * as Sanitize from './Sanitize.js'
 import * as Schema from './Schema.js'
 import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
@@ -190,7 +195,7 @@ export function create(
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
-  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
+  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', def.sanitize)
 
   const cli: Cli = {
     name,
@@ -252,6 +257,7 @@ export function create(
         mcpHandler,
         middlewares,
         rootCommand: rootDef,
+        sanitize: def.sanitize,
         vars: def.vars,
       })
     },
@@ -264,11 +270,13 @@ export function create(
         description: def.description,
         envSchema: def.env,
         format: def.format,
+        contextRules: def.contextRules,
         mcp: def.mcp,
         middlewares,
         outputPolicy: def.outputPolicy,
         rootCommand: rootDef,
         rootFetch,
+        sanitize: def.sanitize,
         sync: def.sync,
         vars: def.vars,
         version: def.version,
@@ -315,10 +323,30 @@ export declare namespace create {
     fetch?: FetchHandler | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
+    /** Rules that should be written into generated agent context. */
+    contextRules?: string[] | undefined
+    /** Validates a full JSON payload passed via `--json`. */
+    input?: z.ZodObject<any> | undefined
+    /** Whether this command mutates external state. */
+    mutates?: boolean | undefined
+    /** Whether this command is destructive and requires confirmation. */
+    destructive?: boolean | undefined
+    /** Whether this command supports pagination helpers. */
+    paginate?: boolean | undefined
     /** Zod schema for named options/flags. */
     options?: options | undefined
+    /** Validates a request body passed via `--json`. */
+    body?: z.ZodObject<any> | undefined
     /** Zod schema for the return value. */
     output?: output | undefined
+    /** Sanitizes output before formatting when the consumer is an agent. */
+    sanitize?:
+      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
     /**
      * Controls when output data is displayed. Inherited by child commands when set on a group or root CLI.
      *
@@ -339,6 +367,10 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
+          /** The CLI name. */
+          name: string
+          /** Whether this invocation is a dry-run preflight. */
+          dryRun: boolean
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */
@@ -353,8 +385,6 @@ export declare namespace create {
           format: Formatter.Format
           /** Whether the user explicitly passed `--format` or `--json`. */
           formatExplicit: boolean
-          /** The CLI name. */
-          name: string
           /** Return a success result with optional metadata (e.g. CTAs). */
           ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
           options: InferOutput<options>
@@ -434,7 +464,7 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(name, options.version ?? '0.0.0', commands)
+    await Mcp.serve(name, options.version ?? '0.0.0', commands, { sanitize: options.sanitize })
     return
   }
 
@@ -524,6 +554,48 @@ async function serveImpl(
       return
     }
     writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix), formatFlag))
+    return
+  }
+
+  const schemaIdx =
+    filtered[0] === 'schema' ? 0 : filtered[0] === name && filtered[1] === 'schema' ? 1 : -1
+  if (schemaIdx !== -1) {
+    const tokens = filtered.slice(schemaIdx + 1)
+    if (tokens.length === 0) {
+      writeln(
+        Formatter.format(
+          {
+            code: 'SCHEMA_COMMAND_REQUIRED',
+            message: `Usage: ${name} schema <command>`,
+          },
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      exit(1)
+      return
+    }
+
+    const resolvedSchema = resolveCommand(commands, tokens)
+    if ('command' in resolvedSchema) {
+      writeln(
+        Formatter.format(
+          describeCommand(tokens, resolvedSchema.command),
+          formatExplicit ? formatFlag : 'toon',
+        ),
+      )
+      return
+    }
+
+    writeln(
+      Formatter.format(
+        {
+          code: 'SCHEMA_NOT_FOUND',
+          message: `Command '${tokens.join(' ')}' was not found`,
+        },
+        formatExplicit ? formatFlag : 'toon',
+      ),
+    )
+    exit(1)
     return
   }
 
@@ -621,6 +693,7 @@ async function serveImpl(
         cwd: options.sync?.cwd,
         depth,
         description: options.description,
+        contextRules: options.contextRules,
         global,
         include: options.sync?.include,
       })
@@ -757,7 +830,7 @@ async function serveImpl(
           env: cmd.env,
           envSource: options.env,
           hint: cmd.hint,
-          options: cmd.options,
+          options: getEffectiveOptionsSchema(cmd),
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
@@ -817,7 +890,7 @@ async function serveImpl(
             env: cmd.env,
             envSource: options.env,
             hint: cmd.hint,
-            options: cmd.options,
+            options: getEffectiveOptionsSchema(cmd),
             examples: formatExamples(cmd.examples),
             usage: cmd.usage,
             commands: collectHelpCommands(helpCmds),
@@ -853,7 +926,7 @@ async function serveImpl(
           env: cmd.env,
           envSource: options.env,
           hint: cmd.hint,
-          options: cmd.options,
+          options: getEffectiveOptionsSchema(cmd),
           examples: formatExamples(cmd.examples),
           usage: cmd.usage,
           commands: helpSubcommands,
@@ -944,21 +1017,99 @@ async function serveImpl(
     }
   }
 
-  function write(output: Output) {
-    if (filterPaths && output.ok && output.data != null)
-      output = { ...output, data: Filter.apply(output.data, filterPaths) }
-    if (tokenCount) {
-      const base = output.ok ? output.data : output.error
-      const formatted = base != null ? Formatter.format(base, format) : ''
-      return writeln(String(estimateTokenCount(formatted)))
+  function withWarnings(base: unknown, warnings: string[] | undefined) {
+    if (!warnings || warnings.length === 0) return base
+    if (typeof base === 'object' && base !== null) return { ...base, _warnings: warnings }
+    return { data: base, _warnings: warnings }
+  }
+
+  async function prepareOutput(output: Output, outputSchema?: z.ZodType | undefined): Promise<Output> {
+    let prepared = output
+    const warnings = [...(prepared.meta.warnings ?? [])]
+
+    if (filterPaths && prepared.ok && prepared.data != null) {
+      if (outputSchema) {
+        const schemaWarnings = Filter.validate(
+          filterPaths,
+          Schema.toJsonSchema(outputSchema),
+        )
+        warnings.push(...schemaWarnings)
+      }
+      prepared = { ...prepared, data: Filter.apply(prepared.data, filterPaths) }
     }
+
+    const target = prepared.ok ? prepared.data : prepared.error
+    const sanitized = await Sanitize.sanitize(target, { command: prepared.meta.command, agent: !human }, options.sanitize)
+
+    if (sanitized.warnings) warnings.push(...sanitized.warnings)
+
+    if (sanitized.blocked) {
+      return {
+        ok: false,
+        error: {
+          code: 'SANITIZED_OUTPUT_BLOCKED',
+          message: 'Command output was blocked by sanitization',
+          ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+        },
+        meta: {
+          ...prepared.meta,
+          ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+        },
+      }
+    }
+
+    if (prepared.ok) {
+      return {
+        ...prepared,
+        data: sanitized.output,
+        meta: {
+          ...prepared.meta,
+          ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+        },
+      }
+    }
+
+    const baseError: OutputError = prepared.ok
+      ? { code: 'UNKNOWN', message: 'Sanitized error output was unavailable' }
+      : prepared.error
+    const error =
+      sanitized.output && typeof sanitized.output === 'object' && 'code' in sanitized.output
+        ? (sanitized.output as OutputError)
+        : {
+            ...baseError,
+            ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+          }
+
+    return {
+      ...prepared,
+      error,
+      meta: {
+        ...prepared.meta,
+        ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+      },
+    }
+  }
+
+  async function write(output: Output, outputSchema?: z.ZodType | undefined) {
+    output = await prepareOutput(output, outputSchema)
+    const blocked = !output.ok && output.error.code === 'SANITIZED_OUTPUT_BLOCKED'
     const cta = output.meta.cta
+    const warnings = output.meta.warnings
+    if (tokenCount) {
+      const base = output.ok ? withWarnings(output.data, warnings) : output.error
+      const formatted = base != null ? Formatter.format(base, format) : ''
+      writeln(String(estimateTokenCount(formatted)))
+      if (blocked) exit(1)
+      return
+    }
     if (human && !verbose) {
       if (output.ok && output.data != null && renderOutput) {
+        if (warnings) for (const warning of warnings) writeln(`Warning: ${warning}`)
         const t = truncate(Formatter.format(output.data, format))
         writeln(t.text)
       } else if (!output.ok) writeln(formatHumanError(output.error))
       if (cta) writeln(formatHumanCta(cta))
+      if (blocked) exit(1)
       return
     }
     if (verbose) {
@@ -980,17 +1131,21 @@ async function serveImpl(
           return writeln(Formatter.format(envelope, format))
         }
       }
-      return writeln(Formatter.format(output, format))
+      writeln(Formatter.format(output, format))
+      if (blocked) exit(1)
+      return
     }
-    const base = output.ok ? output.data : output.error
+    const base = output.ok ? withWarnings(output.data, warnings) : output.error
     const formatted = Formatter.format(base, format)
     if (!cta) {
       if (formatted) writeln(truncate(formatted).text)
+      if (blocked) exit(1)
       return
     }
     const payload =
       typeof base === 'object' && base !== null ? { ...base, cta } : { data: base, cta }
     writeln(truncate(Formatter.format(payload, format)).text)
+    if (blocked) exit(1)
   }
 
   if ('error' in effective) {
@@ -1007,7 +1162,7 @@ async function serveImpl(
       exit(1)
       return
     }
-    write({
+    await write({
       ok: false,
       error: { code: 'COMMAND_NOT_FOUND', message },
       meta: {
@@ -1057,7 +1212,7 @@ async function serveImpl(
       const output = await Fetch.parseResponse(response)
 
       if (output.ok) {
-        write({
+        await write({
           ok: true,
           data: output.data,
           meta: {
@@ -1066,7 +1221,7 @@ async function serveImpl(
           },
         })
       } else {
-        write({
+        await write({
           ok: false,
           error: {
             code: `HTTP_${output.status}`,
@@ -1101,11 +1256,11 @@ async function serveImpl(
           var: varsMap,
           version: options.version,
         }
-        const handleMwSentinel = (result: unknown) => {
+        const handleMwSentinel = async (result: unknown) => {
           if (!isSentinel(result) || result[sentinel] !== 'error') return
           const err = result as ErrorResult
           const cta = formatCtaBlock(name, err.cta)
-          write({
+          await write({
             ok: false,
             error: { code: err.code, message: err.message, ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined) },
             meta: { command: path, duration: `${Math.round(performance.now() - start)}ms`, ...(cta ? { cta } : undefined) },
@@ -1113,7 +1268,7 @@ async function serveImpl(
           exit(err.exitCode ?? 1)
         }
         const composed = fetchMiddleware.reduceRight(
-          (next: () => Promise<void>, mw) => async () => { handleMwSentinel(await mw(mwCtx, next)) },
+          (next: () => Promise<void>, mw) => async () => { await handleMwSentinel(await mw(mwCtx, next)) },
           runFetch,
         )
         await composed()
@@ -1121,7 +1276,7 @@ async function serveImpl(
         await runFetch()
       }
     } catch (error) {
-      write({
+      await write({
         ok: false,
         error: {
           code: error instanceof IncurError ? error.code : 'UNKNOWN',
@@ -1150,20 +1305,43 @@ async function serveImpl(
   const envSource = options.env ?? process.env
 
   const runCommand = async () => {
+    const effectiveOptionsSchema = getEffectiveOptionsSchema(command)
     const { args, options: parsedOptions } = Parser.parse(rest, {
       alias: command.alias as Record<string, string> | undefined,
       args: command.args,
-      options: command.options,
+      options: effectiveOptionsSchema,
     })
+    const { control, options: resolvedOptions } = resolveCommandOptions(
+      command,
+      parsedOptions as Record<string, unknown>,
+    )
 
     if (human)
       emitDeprecationWarnings(
         rest,
-        command.options,
+        effectiveOptionsSchema,
         command.alias as Record<string, string> | undefined,
       )
 
     const env = command.env ? Parser.parseEnv(command.env, envSource) : {}
+
+    if (control.dryRun) {
+      await write({
+        ok: true,
+        data: {
+          dryRun: true,
+          command: path,
+          args,
+          options: resolvedOptions,
+          env,
+        },
+        meta: {
+          command: path,
+          duration: `${Math.round(performance.now() - start)}ms`,
+        },
+      })
+      return
+    }
 
     const okFn = (data: unknown, meta: { cta?: CtaBlock | undefined } = {}): never => {
       return { [sentinel]: 'ok', data, cta: meta.cta } as never
@@ -1181,13 +1359,14 @@ async function serveImpl(
     const result = command.run({
       agent: !human,
       args,
+      dryRun: control.dryRun,
       env,
+      name,
+      options: resolvedOptions,
+      ok: okFn,
       error: errorFn,
       format,
       formatExplicit,
-      name,
-      ok: okFn,
-      options: parsedOptions,
       var: varsMap,
       version: options.version,
     })
@@ -1216,7 +1395,7 @@ async function serveImpl(
     if (isSentinel(awaited)) {
       const cta = formatCtaBlock(name, awaited.cta)
       if (awaited[sentinel] === 'ok') {
-        write({
+        await write({
           ok: true,
           data: awaited.data,
           meta: {
@@ -1224,10 +1403,10 @@ async function serveImpl(
             duration: `${Math.round(performance.now() - start)}ms`,
             ...(cta ? { cta } : undefined),
           },
-        })
+        }, command.output)
       } else {
         const err = awaited as ErrorResult
-        write({
+        await write({
           ok: false,
           error: {
             code: err.code,
@@ -1243,14 +1422,14 @@ async function serveImpl(
         exit(err.exitCode ?? 1)
       }
     } else {
-      write({
+      await write({
         ok: true,
         data: awaited,
         meta: {
           command: path,
           duration: `${Math.round(performance.now() - start)}ms`,
         },
-      })
+      }, command.output)
     }
   }
 
@@ -1281,11 +1460,11 @@ async function serveImpl(
         var: varsMap,
         version: options.version,
       }
-      const handleMwSentinel = (result: unknown) => {
+      const handleMwSentinel = async (result: unknown) => {
         if (!isSentinel(result) || result[sentinel] !== 'error') return
         const err = result as ErrorResult
         const cta = formatCtaBlock(name, err.cta)
-        write({
+        await write({
           ok: false,
           error: {
             code: err.code,
@@ -1302,7 +1481,7 @@ async function serveImpl(
       }
       const composed = allMiddleware.reduceRight(
         (next: () => Promise<void>, mw) => async () => {
-          handleMwSentinel(await mw(mwCtx, next))
+          await handleMwSentinel(await mw(mwCtx, next))
         },
         runCommand,
       )
@@ -1336,7 +1515,7 @@ async function serveImpl(
       return
     }
 
-    write(errorOutput)
+    await write(errorOutput)
     exit(error instanceof IncurError ? (error.exitCode ?? 1) : 1)
   }
 }
@@ -1347,12 +1526,29 @@ declare namespace fetchImpl {
     mcpHandler?: ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>) | undefined
     middlewares?: MiddlewareHandler[] | undefined
     rootCommand?: CommandDefinition<any, any, any> | undefined
+    sanitize?:
+      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
     vars?: z.ZodObject<any> | undefined
   }
 }
 
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
-function createMcpHttpHandler(name: string, version: string) {
+function createMcpHttpHandler(
+  name: string,
+  version: string,
+  sanitize?:
+    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+        output: unknown
+        blocked: boolean
+        warnings?: string[] | undefined
+      }>)
+    | undefined,
+) {
   let transport: any
 
   return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
@@ -1365,9 +1561,10 @@ function createMcpHttpHandler(name: string, version: string) {
       const server = new McpServer({ name, version })
 
       for (const tool of Mcp.collectTools(commands, [])) {
+        const optionsSchema = getEffectiveOptionsSchema(tool.command)
         const mergedShape: Record<string, any> = {
           ...tool.command.args?.shape,
-          ...tool.command.options?.shape,
+          ...optionsSchema?.shape,
         }
         const hasInput = Object.keys(mergedShape).length > 0
 
@@ -1379,7 +1576,8 @@ function createMcpHttpHandler(name: string, version: string) {
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            return Mcp.callTool(tool, params)
+            const extra = hasInput ? callArgs[1] : callArgs[0]
+            return Mcp.callTool(tool, params, extra, sanitize)
           },
         )
       }
@@ -1522,10 +1720,102 @@ async function executeCommand(
   const sentinel_ = Symbol.for('incur.sentinel')
   const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
   let response: Response | undefined
+  let responsePromise: Promise<Response> | undefined
+
+  async function responseFor(
+    body:
+      | { ok: true; data: unknown; meta: { command: string; duration: string } }
+      | {
+          ok: false
+          error: { code: string; message: string; warnings?: string[] | undefined }
+          meta: { command: string; duration: string; warnings?: string[] | undefined }
+        },
+    status: number,
+  ) {
+    const warnings = [...new Set([...(body.ok ? [] : (body.meta.warnings ?? []))])]
+    const target = body.ok ? body.data : body.error
+    const sanitized = await Sanitize.sanitize(target, { command: path, agent: true }, options.sanitize)
+
+    if (sanitized.warnings) warnings.push(...sanitized.warnings)
+
+    if (sanitized.blocked)
+      return jsonResponse(
+        {
+          ok: false,
+          error: {
+            code: 'SANITIZED_OUTPUT_BLOCKED',
+            message: 'Command output was blocked by sanitization',
+            ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+          },
+          meta: {
+            command: path,
+            duration: body.meta.duration,
+            ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+          },
+        },
+        500,
+      )
+
+    if (body.ok)
+      return jsonResponse(
+        {
+          ...body,
+          data: sanitized.output,
+          meta: {
+            ...body.meta,
+            ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+          },
+        },
+        status,
+      )
+
+    const error =
+      sanitized.output && typeof sanitized.output === 'object' && 'code' in sanitized.output
+        ? sanitized.output
+        : {
+            ...body.error,
+            ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+          }
+
+    return jsonResponse(
+      {
+        ...body,
+        error,
+        meta: {
+          ...body.meta,
+          ...(warnings.length ? { warnings: [...new Set(warnings)] } : undefined),
+        },
+      },
+      status,
+    )
+  }
 
   const runCommand = async () => {
     const { args } = Parser.parse(rest, { args: command.args })
-    const parsedOptions = command.options ? command.options.parse(inputOptions) : {}
+    const effectiveOptionsSchema = getEffectiveOptionsSchema(command)
+    const parsedOptions = effectiveOptionsSchema ? effectiveOptionsSchema.parse(inputOptions) : {}
+    const { control, options: resolvedOptions } = resolveCommandOptions(
+      command,
+      parsedOptions as Record<string, unknown>,
+    )
+
+    if (control.dryRun) {
+      response = await responseFor(
+        {
+          ok: true,
+          data: {
+            dryRun: true,
+            command: path,
+            args,
+            options: resolvedOptions,
+            env: {},
+          },
+          meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+        },
+        200,
+      )
+      return
+    }
 
     const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
     const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never =>
@@ -1534,13 +1824,14 @@ async function executeCommand(
     const result = command.run({
       agent: true,
       args,
+      dryRun: control.dryRun,
       env: {},
       error: errorFn,
       format: 'json',
       formatExplicit: true,
       name: path,
       ok: okFn,
-      options: parsedOptions,
+      options: resolvedOptions,
       var: varsMap,
       version: undefined,
     })
@@ -1589,22 +1880,23 @@ async function executeCommand(
     if (typeof awaited === 'object' && awaited !== null && sentinel_ in awaited) {
       const tagged = awaited as any
       if (tagged[sentinel_] === 'error')
-        response = jsonResponse(
-          { ok: false, error: { code: tagged.code, message: tagged.message }, meta: { command: path, duration } },
+        response = await responseFor(
+          {
+            ok: false,
+            error: { code: tagged.code, message: tagged.message },
+            meta: { command: path, duration },
+          },
           500,
         )
       else
-        response = jsonResponse(
+        response = await responseFor(
           { ok: true, data: tagged.data, meta: { command: path, duration } },
           200,
         )
       return
     }
 
-    response = jsonResponse(
-      { ok: true, data: awaited, meta: { command: path, duration } },
-      200,
-    )
+    response = await responseFor({ ok: true, data: awaited, meta: { command: path, duration } }, 200)
   }
 
   try {
@@ -1612,7 +1904,7 @@ async function executeCommand(
     if (allMiddleware.length > 0) {
       const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never => {
         const duration = `${Math.round(performance.now() - start)}ms`
-        response = jsonResponse(
+        responsePromise = responseFor(
           { ok: false, error: { code: opts.code, message: opts.message }, meta: { command: path, duration } },
           500,
         )
@@ -1641,16 +1933,17 @@ async function executeCommand(
   } catch (error) {
     const duration = `${Math.round(performance.now() - start)}ms`
     if (error instanceof ValidationError)
-      return jsonResponse(
+      return responseFor(
         { ok: false, error: { code: 'VALIDATION_ERROR', message: error.message }, meta: { command: path, duration } },
         400,
       )
-    return jsonResponse(
+    return responseFor(
       { ok: false, error: { code: error instanceof IncurError ? error.code : 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }, meta: { command: path, duration } },
       500,
     )
   }
 
+  if (!response && responsePromise) response = await responsePromise
   return response!
 }
 
@@ -1674,7 +1967,7 @@ function formatHumanValidationError(
       env: command.env,
       envSource,
       hint: command.hint,
-      options: command.options,
+      options: getEffectiveOptionsSchema(command),
       examples: formatExamples(command.examples),
       usage: command.usage,
     }),
@@ -1779,6 +2072,7 @@ declare namespace serveImpl {
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
     description?: string | undefined
+    contextRules?: string[] | undefined
     /** CLI-level env schema. Parsed before middleware runs. */
     envSchema?: z.ZodObject<any> | undefined
     /** CLI-level default output format. */
@@ -1787,6 +2081,13 @@ declare namespace serveImpl {
     middlewares?: MiddlewareHandler[] | undefined
     /** CLI-level default output policy. */
     outputPolicy?: OutputPolicy | undefined
+    sanitize?:
+      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
     mcp?:
       | {
           agents?: string[] | undefined
@@ -1838,13 +2139,17 @@ function extractBuiltinFlags(argv: string[]) {
     else if (token === '--version') version = true
     else if (token === '--schema') schema = true
     else if (token === '--json') {
-      format = 'json'
-      formatExplicit = true
+      const next = argv[i + 1]
+      if (next !== undefined && !next.startsWith('-')) rest.push(token)
+      else {
+        format = 'json'
+        formatExplicit = true
+      }
     } else if (token === '--format' && argv[i + 1]) {
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
-    } else if (token === '--filter-output' && argv[i + 1]) {
+    } else if ((token === '--filter-output' || token === '--fields') && argv[i + 1]) {
       filterOutput = argv[i + 1]!
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
@@ -1858,6 +2163,11 @@ function extractBuiltinFlags(argv: string[]) {
   }
 
   return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp, help, version, schema, rest }
+}
+
+/** @internal Returns a command's effective option schema, including injected framework flags. */
+export function getCommandOptionsSchema(command: CommandDefinition<any, any, any>) {
+  return getEffectiveOptionsSchema(command)
 }
 
 /** @internal Collects immediate child commands/groups for help output. */
@@ -2030,7 +2340,7 @@ async function handleStreaming(
     renderOutput: boolean
     verbose: boolean
     truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
-    write: (output: Output) => void
+    write: (output: Output, outputSchema?: z.ZodType | undefined) => Promise<void>
     writeln: (s: string) => void
     exit: (code: number) => void
   },
@@ -2149,7 +2459,7 @@ async function handleStreaming(
         if (isSentinel(value)) {
           const tagged = value as any
           if (tagged[sentinel] === 'error') {
-            ctx.write({
+            await ctx.write({
               ok: false,
               error: {
                 code: tagged.code,
@@ -2170,7 +2480,7 @@ async function handleStreaming(
 
       if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
         const err = returnValue as ErrorResult
-        ctx.write({
+        await ctx.write({
           ok: false,
           error: {
             code: err.code,
@@ -2191,7 +2501,7 @@ async function handleStreaming(
           ? formatCtaBlock(ctx.name, (returnValue as OkResult).cta)
           : undefined
 
-      ctx.write({
+      await ctx.write({
         ok: true,
         data: chunks,
         meta: {
@@ -2201,7 +2511,7 @@ async function handleStreaming(
         },
       })
     } catch (error) {
-      ctx.write({
+      await ctx.write({
         ok: false,
         error: {
           code: error instanceof IncurError ? error.code : 'UNKNOWN',
@@ -2286,6 +2596,10 @@ function collectCommands(
   description?: string | undefined
   schema?: Record<string, unknown> | undefined
   examples?: { command: string; description?: string | undefined }[] | undefined
+  mutates?: boolean | undefined
+  destructive?: boolean | undefined
+  paginate?: boolean | undefined
+  openapi?: Record<string, unknown> | undefined
 }[] {
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
@@ -2296,32 +2610,66 @@ function collectCommands(
       result.push(cmd)
     } else if (isGroup(entry)) {
       result.push(...collectCommands(entry.commands, path))
-    } else {
-      const cmd: (typeof result)[number] = { name: path.join(' ') }
-      if (entry.description) cmd.description = entry.description
-
-      const inputSchema = buildInputSchema(entry.args, entry.env, entry.options)
-      const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
-      if (inputSchema || outputSchema) {
-        cmd.schema = {}
-        if (inputSchema?.args) cmd.schema.args = inputSchema.args
-        if (inputSchema?.env) cmd.schema.env = inputSchema.env
-        if (inputSchema?.options) cmd.schema.options = inputSchema.options
-        if (outputSchema) cmd.schema.output = outputSchema
-      }
-
-      const examples = formatExamples(entry.examples)
-      if (examples) {
-        const cmdName = path.join(' ')
-        cmd.examples = examples.map((e) => ({
-          ...e,
-          command: e.command ? `${cmdName} ${e.command}` : cmdName,
-        }))
-      }
-      result.push(cmd)
-    }
+    } else result.push(describeCommand(path, entry))
   }
   return result
+}
+
+function describeCommand(
+  path: string[],
+  entry: CommandDefinition<any, any, any>,
+): {
+  name: string
+  description?: string | undefined
+  schema?: Record<string, unknown> | undefined
+  examples?: { command: string; description?: string | undefined }[] | undefined
+  mutates?: boolean | undefined
+  destructive?: boolean | undefined
+  paginate?: boolean | undefined
+  openapi?: Record<string, unknown> | undefined
+} {
+  const cmd: ReturnType<typeof collectCommands>[number] = { name: path.join(' ') }
+  if (entry.description) cmd.description = entry.description
+  if (entry.mutates) cmd.mutates = true
+  if (entry.destructive) cmd.destructive = true
+  if (entry.paginate) cmd.paginate = true
+  if (entry.openapi) cmd.openapi = entry.openapi as Record<string, unknown>
+
+  const inputSchema = buildInputSchema(
+    entry.args,
+    entry.env,
+    getEffectiveOptionsSchema(entry),
+    entry.input,
+    entry.body,
+  )
+  const outputSchema = (() => {
+    if (entry.output) {
+      const json = Schema.toJsonSchema(entry.output)
+      const properties = (json.properties as Record<string, unknown> | undefined) ?? {}
+      if (Object.keys(properties).length > 0 || !entry.openapi?.response) return json
+    }
+    return entry.openapi?.response
+  })()
+  if (inputSchema || outputSchema) {
+    cmd.schema = {}
+    if (inputSchema?.args) cmd.schema.args = inputSchema.args
+    if (inputSchema?.env) cmd.schema.env = inputSchema.env
+    if (inputSchema?.options) cmd.schema.options = inputSchema.options
+    if (inputSchema?.input) cmd.schema.input = inputSchema.input
+    if (inputSchema?.body) cmd.schema.body = inputSchema.body
+    if (outputSchema) cmd.schema.output = outputSchema
+  }
+
+  const examples = formatExamples(entry.examples)
+  if (examples) {
+    const cmdName = path.join(' ')
+    cmd.examples = examples.map((e) => ({
+      ...e,
+      command: e.command ? `${cmdName} ${e.command}` : cmdName,
+    }))
+  }
+
+  return cmd
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
@@ -2347,8 +2695,17 @@ function collectSkillCommands(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
-      if (entry.options) cmd.options = entry.options
+      const effectiveOptions = getEffectiveOptionsSchema(entry)
+      if (effectiveOptions) cmd.options = effectiveOptions
       if (entry.output) cmd.output = entry.output
+      if (entry.mutates)
+        cmd.hint = [cmd.hint, 'Use `--dry-run` before executing this mutating command.']
+          .filter(Boolean)
+          .join(' ')
+      if (entry.destructive)
+        cmd.hint = [cmd.hint, 'Confirm with the user before executing this destructive command.']
+          .filter(Boolean)
+          .join(' ')
       const examples = formatExamples(entry.examples)
       if (examples) {
         const cmdName = path.join(' ')
@@ -2384,22 +2741,30 @@ function buildInputSchema(
   args: z.ZodObject<any> | undefined,
   env: z.ZodObject<any> | undefined,
   options: z.ZodObject<any> | undefined,
+  input: z.ZodObject<any> | undefined,
+  body: z.ZodObject<any> | undefined,
 ):
   | {
       args?: Record<string, unknown> | undefined
       env?: Record<string, unknown> | undefined
       options?: Record<string, unknown> | undefined
+      input?: Record<string, unknown> | undefined
+      body?: Record<string, unknown> | undefined
     }
   | undefined {
-  if (!args && !env && !options) return undefined
+  if (!args && !env && !options && !input && !body) return undefined
   const result: {
     args?: Record<string, unknown> | undefined
     env?: Record<string, unknown> | undefined
     options?: Record<string, unknown> | undefined
+    input?: Record<string, unknown> | undefined
+    body?: Record<string, unknown> | undefined
   } = {}
   if (args) result.args = Schema.toJsonSchema(args)
   if (env) result.env = Schema.toJsonSchema(env)
   if (options) result.options = Schema.toJsonSchema(options)
+  if (input) result.input = Schema.toJsonSchema(input)
+  if (body) result.body = Schema.toJsonSchema(body)
   return result
 }
 
@@ -2469,6 +2834,8 @@ type Output = OneOf<
         message: string
         /** Whether the operation can be retried. */
         retryable?: boolean | undefined
+        /** Non-fatal warnings related to the output. */
+        warnings?: string[] | undefined
       }
       /** Request metadata. */
       meta: Output.Meta
@@ -2476,6 +2843,8 @@ type Output = OneOf<
       ok: false
     }
 >
+
+type OutputError = Extract<Output, { ok: false }>['error']
 
 /** @internal */
 declare namespace Output {
@@ -2489,6 +2858,8 @@ declare namespace Output {
     duration: string
     /** Offset to pass as `--token-offset` to fetch the next page of truncated output. */
     nextOffset?: number | undefined
+    /** Non-fatal warnings related to the output. */
+    warnings?: string[] | undefined
   }
 }
 
@@ -2507,8 +2878,18 @@ type CommandDefinition<
     : Record<string, string> | undefined
   /** Zod schema for positional arguments. */
   args?: args | undefined
+  /** Validates a full JSON payload passed via `--json`. */
+  input?: z.ZodObject<any> | undefined
+  /** Validates a request body passed via `--json`. */
+  body?: z.ZodObject<any> | undefined
   /** A short description of what the command does. */
   description?: string | undefined
+  /** Whether this command mutates external state. */
+  mutates?: boolean | undefined
+  /** Whether this command is destructive and requires confirmation. */
+  destructive?: boolean | undefined
+  /** Whether this command supports pagination helpers. */
+  paginate?: boolean | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
   env?: env | undefined
   /** Usage examples for this command. */
@@ -2517,6 +2898,21 @@ type CommandDefinition<
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */
   hint?: string | undefined
+  /** Runtime OpenAPI metadata for generated commands. */
+  openapi?:
+    | {
+        description?: string | undefined
+        httpMethod: string
+        operationId?: string | undefined
+        parameters?: {
+          path?: Record<string, unknown> | undefined
+          query?: Record<string, unknown> | undefined
+        }
+        path: string
+        requestBody?: Record<string, unknown> | undefined
+        response?: Record<string, unknown> | undefined
+      }
+    | undefined
   /** Zod schema for named options/flags. */
   options?: options | undefined
   /** Zod schema for the command's return value. */
@@ -2540,6 +2936,10 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
+    /** The CLI name. */
+    name: string
+    /** Whether this invocation is a dry-run preflight. */
+    dryRun: boolean
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */
@@ -2554,8 +2954,6 @@ type CommandDefinition<
     format: Formatter.Format
     /** Whether the user explicitly passed `--format` or `--json`. */
     formatExplicit: boolean
-    /** The CLI name. */
-    name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
     ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
     options: InferOutput<options>
