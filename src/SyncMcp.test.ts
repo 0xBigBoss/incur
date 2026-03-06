@@ -4,18 +4,28 @@ import { join } from 'node:path'
 
 import { detectPackageSpecifier, register } from './SyncMcp.js'
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
-    cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
-  }),
+const mocked = vi.hoisted(() => ({
+  execFile: vi.fn(
+    (
+      _cmd: string,
+      _args: readonly string[] | undefined,
+      cb?: ((error: Error | null, stdout: string, stderr: string) => void) | undefined,
+    ) => {
+      cb?.(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
+    },
+  ),
+  fakeHome: undefined as string | undefined,
 }))
 
-let fakeHome: string | undefined
+vi.mock('node:child_process', () => ({
+  execFile: mocked.execFile,
+}))
+
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>()
   return {
     ...actual,
-    homedir: () => fakeHome ?? actual.homedir(),
+    homedir: () => mocked.fakeHome ?? actual.homedir(),
   }
 })
 
@@ -26,13 +36,14 @@ beforeEach(() => {
   savedArgv1 = process.argv[1]
   tmp = join(tmpdir(), `clac-test-${Date.now()}`)
   mkdirSync(join(tmp, 'node_modules', '.bin'), { recursive: true })
-  fakeHome = join(tmp, 'home')
-  mkdirSync(fakeHome, { recursive: true })
+  mocked.fakeHome = join(tmp, 'home')
+  mkdirSync(mocked.fakeHome, { recursive: true })
+  mocked.execFile.mockClear()
 })
 
 afterEach(() => {
   process.argv[1] = savedArgv1!
-  fakeHome = undefined
+  mocked.fakeHome = undefined
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -103,7 +114,7 @@ test('register calls add-mcp and writes amp config', async () => {
   expect(result.agents).toContain('Cursor')
   expect(result.agents).toContain('Amp')
 
-  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const configPath = join(mocked.fakeHome!, '.config', 'amp', 'settings.json')
   expect(existsSync(configPath)).toBe(true)
   const config = JSON.parse(readFileSync(configPath, 'utf-8'))
   expect(config['amp.mcpServers']['my-cli']).toEqual({
@@ -113,20 +124,19 @@ test('register calls add-mcp and writes amp config', async () => {
 })
 
 test('register with agents: ["amp"] skips add-mcp', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
+  mocked.execFile.mockClear()
 
   const result = await register('my-cli', {
     command: 'npx my-cli --mcp',
     agents: ['amp'],
   })
 
-  expect(execFile).not.toHaveBeenCalled()
+  expect(mocked.execFile).not.toHaveBeenCalled()
   expect(result.agents).toEqual(['Amp'])
 })
 
 test('register writes amp config to existing settings', async () => {
-  const configDir = join(fakeHome!, '.config', 'amp')
+  const configDir = join(mocked.fakeHome!, '.config', 'amp')
   mkdirSync(configDir, { recursive: true })
   writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ 'amp.theme': 'dark' }))
 

@@ -1,5 +1,6 @@
 import { Cli, Errors, Skill, Typegen, z } from 'incur'
 import { app as honoApp } from '../test/fixtures/hono-api.js'
+import * as SyncSkills from './SyncSkills.js'
 
 let __mockSkillsHash: string | undefined
 
@@ -10,10 +11,12 @@ beforeAll(() => {
 afterAll(() => {
   ;(process.stdout as any).isTTY = originalIsTTY
 })
-
-vi.mock('./SyncSkills.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => __mockSkillsHash }
+beforeEach(() => {
+  vi.spyOn(SyncSkills, 'readHash').mockImplementation(() => __mockSkillsHash)
+})
+afterEach(() => {
+  __mockSkillsHash = undefined
+  vi.restoreAllMocks()
 })
 
 describe('routing', () => {
@@ -2631,6 +2634,10 @@ describe('.well-known/skills', () => {
       "---
       name: app-ping
       description: Health check. Run \`app ping --help\` for usage details.
+      metadata:
+        openclaw:
+          requires:
+            bins: ["app"]
       command: app ping
       ---
 

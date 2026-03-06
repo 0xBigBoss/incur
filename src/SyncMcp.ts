@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process'
+import * as childProcess from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import * as os from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
@@ -53,7 +53,7 @@ export async function register(
 
 /** @internal Registers an MCP server in Amp's settings.json. */
 function registerAmp(name: string, command: string): boolean {
-  const configPath = join(homedir(), '.config', 'amp', 'settings.json')
+  const configPath = join(os.homedir(), '.config', 'amp', 'settings.json')
 
   let config: Record<string, any> = {}
   if (existsSync(configPath)) {
@@ -122,7 +122,7 @@ export function detectPackageSpecifier(name: string): string {
 /** Promisified execFile with stderr in error message. */
 function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
+    childProcess.execFile(cmd, args, (error, stdout, stderr) => {
       if (error) {
         const msg = stderr?.trim() || stdout?.trim() || error.message
         reject(new Error(msg))

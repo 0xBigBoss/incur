@@ -4,17 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { generate } from './Skillgen.js'
-
-vi.mock('./internal/utils.js', () => ({
-  importCli: vi.fn(),
-}))
-import { importCli } from './internal/utils.js'
+import * as Utils from './internal/utils.js'
 
 let tmp: string
 beforeEach(() => {
   tmp = join(tmpdir(), `skillgen-${Date.now()}`)
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -24,7 +21,7 @@ test('generates skill file for single-command cli', async () => {
     args: z.object({ name: z.string().describe('Name') }),
     run: () => ({ message: 'hi' }),
   })
-  vi.mocked(importCli).mockResolvedValue(cli)
+  vi.spyOn(Utils, 'importCli').mockResolvedValue(cli)
 
   const files = await generate('fake-input', tmp, 0)
   expect(files).toHaveLength(1)
@@ -35,7 +32,7 @@ test('generates split files for multi-command cli', async () => {
   const cli = Cli.create('app', { description: 'My app' })
     .command('deploy', { description: 'Deploy', run: () => ({}) })
     .command('status', { description: 'Status', run: () => ({}) })
-  vi.mocked(importCli).mockResolvedValue(cli)
+  vi.spyOn(Utils, 'importCli').mockResolvedValue(cli)
 
   const files = await generate('fake-input', tmp, 1)
   expect(files.length).toBeGreaterThanOrEqual(1)
@@ -50,7 +47,7 @@ test('collects group descriptions', async () => {
     run: () => ({}),
   })
   const cli = Cli.create('app', { description: 'My app' }).command(group)
-  vi.mocked(importCli).mockResolvedValue(cli)
+  vi.spyOn(Utils, 'importCli').mockResolvedValue(cli)
 
   const files = await generate('fake-input', tmp, 1)
   const content = files.map((f) => readFileSync(f, 'utf-8')).join('\n')
@@ -67,7 +64,7 @@ test('includes args, options, and examples in output', async () => {
     examples: [{ args: { name: 'world' }, description: 'Greet the world' }],
     run: () => ({}),
   })
-  vi.mocked(importCli).mockResolvedValue(cli)
+  vi.spyOn(Utils, 'importCli').mockResolvedValue(cli)
 
   const files = await generate('fake-input', tmp, 0)
   const content = readFileSync(files[0]!, 'utf-8')

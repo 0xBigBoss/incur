@@ -1,4 +1,5 @@
 import { Cli, Completions, z } from 'incur'
+import * as SyncSkills from './SyncSkills.js'
 
 const originalIsTTY = process.stdout.isTTY
 const originalEnv = { ...process.env }
@@ -9,10 +10,11 @@ afterAll(() => {
   ;(process.stdout as any).isTTY = originalIsTTY
   process.env = originalEnv
 })
-
-vi.mock('./SyncSkills.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./SyncSkills.js')>()
-  return { ...actual, readHash: () => undefined }
+beforeEach(() => {
+  vi.spyOn(SyncSkills, 'readHash').mockImplementation(() => undefined)
+})
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 async function serve(
