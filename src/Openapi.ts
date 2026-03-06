@@ -35,8 +35,13 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 /** A generated command entry compatible with incur's internal CommandEntry. */
 type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
+  body?: z.ZodObject<any> | undefined
   description?: string | undefined
+  destructive?: boolean | undefined
+  mutates?: boolean | undefined
+  openapi?: Record<string, unknown> | undefined
   options?: z.ZodObject<any> | undefined
+  output?: z.ZodType | undefined
   run: (context: any) => any
 }
 
@@ -63,6 +68,7 @@ export async function generateCommands(
       const bodySchema = op.requestBody?.content?.['application/json']?.schema
       const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
       const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
+      const responseSchema = getResponseSchema(op.responses)
 
       // Build args Zod schema from path params
       let argsSchema: z.ZodObject<any> | undefined
@@ -91,11 +97,31 @@ export async function generateCommands(
         optShape[key] = zodType
       }
       const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
+      const bodyZod =
+        bodySchema && typeof bodySchema === 'object' ? (toZod(bodySchema) as z.ZodObject<any>) : undefined
+      const outputSchema =
+        responseSchema && typeof responseSchema === 'object' ? toZod(responseSchema) : undefined
 
       commands.set(name, {
         description: op.summary ?? op.description,
         args: argsSchema,
+        body: bodyZod,
+        destructive: httpMethod === 'DELETE',
+        mutates: !['GET', 'HEAD'].includes(httpMethod),
+        openapi: {
+          description: op.description ?? op.summary,
+          httpMethod,
+          operationId: op.operationId,
+          parameters: {
+            ...(pathParams.length > 0 ? { path: Object.fromEntries(pathParams.map((param) => [param.name, param.schema ?? { type: 'string' }])) } : undefined),
+            ...(queryParams.length > 0 ? { query: Object.fromEntries(queryParams.map((param) => [param.name, param.schema ?? { type: 'string' }])) } : undefined),
+          },
+          path,
+          ...(bodySchema ? { requestBody: bodySchema } : undefined),
+          ...(responseSchema ? { response: responseSchema } : undefined),
+        },
         options: optionsSchema,
+        output: outputSchema,
         run: createHandler({ basePath: options.basePath, fetch, httpMethod, path, pathParams, queryParams, bodyProps }),
       })
     }
@@ -167,6 +193,18 @@ function createHandler(config: {
 
     return output.data
   }
+}
+
+function getResponseSchema(
+  responses: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!responses) return undefined
+  const preferred = Object.entries(responses).find(([status]) => /^2\d\d$/.test(status))
+    ?? Object.entries(responses).find(([status]) => status === 'default')
+  const response = preferred?.[1] as
+    | { content?: Record<string, { schema?: Record<string, unknown> | undefined }> | undefined }
+    | undefined
+  return response?.content?.['application/json']?.schema
 }
 
 /** Converts a JSON Schema object to a Zod schema. */
