@@ -1,24 +1,22 @@
+import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import { z } from 'zod'
 
-import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import {
-  getEffectiveOptionsSchema,
-  resolveCommandOptions,
-} from './CommandOptions.js'
+import { getEffectiveOptionsSchema, resolveCommandOptions } from './CommandOptions.js'
 import * as Completions from './Completions.js'
-import * as Filter from './Filter.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ValidationError } from './Errors.js'
 import * as Fetch from './Fetch.js'
-import * as Openapi from './Openapi.js'
+import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
+import * as Openapi from './Openapi.js'
 export type { MiddlewareHandler }
 import * as Parser from './Parser.js'
+import type { Plugin } from './Plugin.js'
 import type { Register } from './Register.js'
 import * as Sanitize from './Sanitize.js'
 import * as Schema from './Schema.js'
@@ -68,7 +66,13 @@ export type Cli<
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
       name: name,
-      definition: { basePath?: string | undefined; description?: string | undefined; fetch: FetchHandler; openapi?: Openapi.OpenAPISpec | undefined; outputPolicy?: OutputPolicy | undefined },
+      definition: {
+        basePath?: string | undefined
+        description?: string | undefined
+        fetch: FetchHandler
+        openapi?: Openapi.OpenAPISpec | undefined
+        outputPolicy?: OutputPolicy | undefined
+      },
     ): Cli<commands, vars, env>
   }
   /** A short description of the CLI. */
@@ -81,6 +85,15 @@ export type Cli<
   fetch(req: Request): Promise<Response>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
+  /** Mounts a generator-style plugin as a command group. */
+  plugin: <
+    const name extends string,
+    const config extends z.ZodObject<any> | undefined = undefined,
+    const sub extends CommandsMap = {},
+  >(
+    name: name,
+    plugin: Plugin<config, sub>,
+  ) => Cli<commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] }, vars, env>
   /** Registers middleware that runs around every command. */
   use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
@@ -197,6 +210,64 @@ export function create(
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', def.sanitize)
 
+  function mountGeneratedGroup(
+    mount: string,
+    options: {
+      description?: string | undefined
+      kind: 'command' | 'openapi' | 'plugin'
+      load: () => Promise<InternalGroup>
+    },
+  ) {
+    pending.push(
+      Promise.resolve()
+        .then(options.load)
+        .then((group) => {
+          commands.set(mount, group)
+        })
+        .catch((error) => {
+          const base =
+            error instanceof IncurError
+              ? error
+              : new IncurError({
+                  code:
+                    options.kind === 'plugin'
+                      ? 'PLUGIN_RESOLUTION_FAILED'
+                      : 'COMMAND_GENERATION_FAILED',
+                  message:
+                    options.kind === 'plugin'
+                      ? `Failed to resolve plugin '${mount}': ${error instanceof Error ? error.message : String(error)}`
+                      : options.kind === 'command'
+                        ? `Failed to mount command group '${mount}': ${error instanceof Error ? error.message : String(error)}`
+                      : `Failed to generate command group '${mount}': ${error instanceof Error ? error.message : String(error)}`,
+                })
+          throw base
+        }),
+    )
+  }
+
+  async function awaitCliPending(sub: Cli) {
+    const childPending = toPending.get(sub)
+    if (childPending && childPending.length > 0) await Promise.all(childPending)
+  }
+
+  function resolveMountedGroup(sub: Cli, description = sub.description): InternalGroup {
+    const subCommands = toCommands.get(sub)
+    if (!subCommands)
+      throw new IncurError({
+        code: 'COMMAND_GENERATION_FAILED',
+        message: `Mounted CLI '${sub.name}' is not ready`,
+      })
+    const subOutputPolicy = toOutputPolicy.get(sub)
+    const subMiddlewares = toMiddlewares.get(sub)
+    return {
+      _group: true,
+      description,
+      commands: subCommands,
+      ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
+      ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
+    }
+  }
+
   const cli: Cli = {
     name,
     description: def.description,
@@ -206,18 +277,19 @@ export function create(
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
         if (def && 'fetch' in def && typeof def.fetch === 'function') {
-          // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
-            pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then((generated) => {
-                commands.set(nameOrCli, {
-                  _group: true,
-                  description: def.description,
-                  commands: generated as Map<string, CommandEntry>,
-                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                } as InternalGroup)
+            mountGeneratedGroup(nameOrCli, {
+              description: def.description,
+              kind: 'openapi',
+              load: async () => ({
+                _group: true,
+                description: def.description,
+                commands: (await Openapi.generateCommands(def.openapi, def.fetch, {
+                  basePath: def.basePath,
+                })) as Map<string, CommandEntry>,
+                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
               }),
-            )
+            })
             return cli
           }
           commands.set(nameOrCli, {
@@ -238,21 +310,52 @@ export function create(
         return cli
       }
       const sub = nameOrCli as Cli
-      const subCommands = toCommands.get(sub)!
-      const subOutputPolicy = toOutputPolicy.get(sub)
-      const subMiddlewares = toMiddlewares.get(sub)
-      commands.set(sub.name, {
-        _group: true,
-        description: sub.description,
-        commands: subCommands,
-        ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
-        ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
+      const childPending = toPending.get(sub)
+      if (childPending && childPending.length > 0)
+        mountGeneratedGroup(sub.name, {
+          description: sub.description,
+          kind: 'command',
+          load: async () => {
+            await awaitCliPending(sub)
+            return resolveMountedGroup(sub)
+          },
+        })
+      else commands.set(sub.name, resolveMountedGroup(sub))
+      return cli
+    },
+
+    plugin(nameOrCli: any, plugin: any): any {
+      mountGeneratedGroup(nameOrCli, {
+        description: plugin.description,
+        kind: 'plugin',
+        load: async () => {
+          const config =
+            plugin.config instanceof z.ZodObject
+              ? plugin.config.parse(plugin.options ?? {})
+              : undefined
+          const resolved = await plugin.resolve({
+            mount: nameOrCli,
+            cwd: process.cwd(),
+            config,
+          })
+          if (resolved.name !== nameOrCli)
+            throw new IncurError({
+              code: 'PLUGIN_RESOLUTION_FAILED',
+              message: `Plugin '${plugin.name}' resolved '${resolved.name}', expected '${nameOrCli}'`,
+            })
+          await awaitCliPending(resolved)
+          return resolveMountedGroup(resolved, plugin.description ?? resolved.description)
+        },
       })
       return cli
     },
 
     async fetch(req: Request) {
-      if (pending.length > 0) await Promise.all(pending)
+      try {
+        if (pending.length > 0) await Promise.all(pending)
+      } catch (error) {
+        return renderPendingFetchError(name, error)
+      }
       return fetchImpl(name, commands, req, {
         mcpHandler,
         middlewares,
@@ -263,7 +366,11 @@ export function create(
     },
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
-      if (pending.length > 0) await Promise.all(pending)
+      try {
+        if (pending.length > 0) await Promise.all(pending)
+      } catch (error) {
+        return renderPendingServeError(name, argv, error, serveOptions)
+      }
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
@@ -292,6 +399,7 @@ export function create(
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
   toMiddlewares.set(cli, middlewares)
+  toPending.set(cli, pending)
   toCommands.set(cli, commands)
   return cli
 }
@@ -341,7 +449,10 @@ export declare namespace create {
     output?: output | undefined
     /** Sanitizes output before formatting when the consumer is an agent. */
     sanitize?:
-      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
           output: unknown
           blocked: boolean
           warnings?: string[] | undefined
@@ -434,6 +545,58 @@ export declare namespace serve {
   }
 }
 
+function toStartupError(error: unknown) {
+  if (error instanceof IncurError) return error
+  return new IncurError({
+    code: 'UNKNOWN',
+    cause: error instanceof Error ? error : undefined,
+    message: error instanceof Error ? error.message : String(error),
+  })
+}
+
+async function renderPendingServeError(
+  _name: string,
+  argv: string[],
+  error: unknown,
+  options: serve.Options = {},
+) {
+  const failure = toStartupError(error)
+  const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
+  const exit = options.exit ?? ((code: number) => process.exit(code))
+  const { format: formatFlag, formatExplicit } = extractBuiltinFlags(argv)
+  const human = process.stdout.isTTY === true
+  const payload = {
+    code: failure.code,
+    message: failure.message,
+    ...(failure.retryable !== undefined ? { retryable: failure.retryable } : undefined),
+  }
+  if (human && !formatExplicit) stdout(`${formatHumanError(payload)}\n`)
+  else stdout(`${Formatter.format(payload, formatFlag)}\n`)
+  exit(failure.exitCode ?? 1)
+}
+
+function renderPendingFetchError(name: string, error: unknown) {
+  const failure = toStartupError(error)
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: {
+        code: failure.code,
+        message: failure.message,
+        ...(failure.retryable !== undefined ? { retryable: failure.retryable } : undefined),
+      },
+      meta: {
+        command: name,
+        duration: '0ms',
+      },
+    }),
+    {
+      headers: { 'content-type': 'application/json' },
+      status: 500,
+    },
+  )
+}
+
 /** @internal Shared serve implementation for both router and leaf CLIs. */
 // biome-ignore lint/correctness/noUnusedVariables: _
 async function serveImpl(
@@ -464,7 +627,11 @@ async function serveImpl(
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
-    await Mcp.serve(name, options.version ?? '0.0.0', commands, { sanitize: options.sanitize })
+    try {
+      await Mcp.serve(name, options.version ?? '0.0.0', commands, { sanitize: options.sanitize })
+    } catch (error) {
+      return renderPendingServeError(name, argv, error, { stdout, exit })
+    }
     return
   }
 
@@ -859,7 +1026,16 @@ async function serveImpl(
     filtered.length === 0 && options.rootCommand
       ? { command: options.rootCommand, path: name, rest: [] as string[] }
       : filtered.length === 0 && options.rootFetch
-        ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: [] as string[] }
+        ? {
+            fetchGateway: {
+              _fetch: true as const,
+              fetch: options.rootFetch,
+              description: options.description,
+            },
+            middlewares: [] as MiddlewareHandler[],
+            path: name,
+            rest: [] as string[],
+          }
         : resolveCommand(commands, filtered)
 
   // --help on a fetch gateway → show fetch-specific help
@@ -989,7 +1165,16 @@ async function serveImpl(
   // Fall back to root fetch when no subcommand matches
   const effective =
     'error' in resolved && options.rootFetch && !resolved.path
-      ? { fetchGateway: { _fetch: true as const, fetch: options.rootFetch, description: options.description }, middlewares: [] as MiddlewareHandler[], path: name, rest: filtered }
+      ? {
+          fetchGateway: {
+            _fetch: true as const,
+            fetch: options.rootFetch,
+            description: options.description,
+          },
+          middlewares: [] as MiddlewareHandler[],
+          path: name,
+          rest: filtered,
+        }
       : 'error' in resolved && options.rootCommand && !resolved.path
         ? { command: options.rootCommand, path: name, rest: filtered }
         : resolved
@@ -1001,7 +1186,11 @@ async function serveImpl(
 
   const filterPaths = filterOutput ? Filter.parse(filterOutput) : undefined
 
-  function truncate(s: string): { text: string; truncated: boolean; nextOffset?: number | undefined } {
+  function truncate(s: string): {
+    text: string
+    truncated: boolean
+    nextOffset?: number | undefined
+  } {
     if (tokenLimit == null && tokenOffset == null) return { text: s, truncated: false }
     const total = estimateTokenCount(s)
     const offset = tokenOffset ?? 0
@@ -1023,23 +1212,27 @@ async function serveImpl(
     return { data: base, _warnings: warnings }
   }
 
-  async function prepareOutput(output: Output, outputSchema?: z.ZodType | undefined): Promise<Output> {
+  async function prepareOutput(
+    output: Output,
+    outputSchema?: z.ZodType | undefined,
+  ): Promise<Output> {
     let prepared = output
     const warnings = [...(prepared.meta.warnings ?? [])]
 
     if (filterPaths && prepared.ok && prepared.data != null) {
       if (outputSchema) {
-        const schemaWarnings = Filter.validate(
-          filterPaths,
-          Schema.toJsonSchema(outputSchema),
-        )
+        const schemaWarnings = Filter.validate(filterPaths, Schema.toJsonSchema(outputSchema))
         warnings.push(...schemaWarnings)
       }
       prepared = { ...prepared, data: Filter.apply(prepared.data, filterPaths) }
     }
 
     const target = prepared.ok ? prepared.data : prepared.error
-    const sanitized = await Sanitize.sanitize(target, { command: prepared.meta.command, agent: !human }, options.sanitize)
+    const sanitized = await Sanitize.sanitize(
+      target,
+      { command: prepared.meta.command, agent: !human },
+      options.sanitize,
+    )
 
     if (sanitized.warnings) warnings.push(...sanitized.warnings)
 
@@ -1115,11 +1308,12 @@ async function serveImpl(
     if (verbose) {
       if (tokenLimit != null || tokenOffset != null) {
         // Truncate data separately so meta (including nextOffset) is always visible
-        const dataFormatted = output.ok && output.data != null
-          ? Formatter.format(output.data, format)
-          : !output.ok
-            ? Formatter.format(output.error, format)
-            : ''
+        const dataFormatted =
+          output.ok && output.data != null
+            ? Formatter.format(output.data, format)
+            : !output.ok
+              ? Formatter.format(output.error, format)
+              : ''
         const t = truncate(dataFormatted)
         if (t.truncated) {
           const envelope: Record<string, unknown> = output.ok
@@ -1225,9 +1419,12 @@ async function serveImpl(
           ok: false,
           error: {
             code: `HTTP_${output.status}`,
-            message: typeof output.data === 'object' && output.data !== null && 'message' in output.data
-              ? String((output.data as any).message)
-              : typeof output.data === 'string' ? output.data : `HTTP ${output.status}`,
+            message:
+              typeof output.data === 'object' && output.data !== null && 'message' in output.data
+                ? String((output.data as any).message)
+                : typeof output.data === 'string'
+                  ? output.data
+                  : `HTTP ${output.status}`,
           },
           meta: {
             command: path,
@@ -1239,11 +1436,18 @@ async function serveImpl(
     }
 
     try {
-      const cliEnv = options.envSchema ? Parser.parseEnv(options.envSchema, options.env ?? process.env) : {}
+      const cliEnv = options.envSchema
+        ? Parser.parseEnv(options.envSchema, options.env ?? process.env)
+        : {}
       if (fetchMiddleware.length > 0) {
         const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
-        const errorFn = (opts: { code: string; exitCode?: number | undefined; message: string; retryable?: boolean | undefined; cta?: CtaBlock | undefined }): never =>
-          ({ [sentinel]: 'error', ...opts }) as never
+        const errorFn = (opts: {
+          code: string
+          exitCode?: number | undefined
+          message: string
+          retryable?: boolean | undefined
+          cta?: CtaBlock | undefined
+        }): never => ({ [sentinel]: 'error', ...opts }) as never
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
@@ -1252,7 +1456,9 @@ async function serveImpl(
           format,
           formatExplicit,
           name,
-          set(key: string, value: unknown) { varsMap[key] = value },
+          set(key: string, value: unknown) {
+            varsMap[key] = value
+          },
           var: varsMap,
           version: options.version,
         }
@@ -1262,13 +1468,23 @@ async function serveImpl(
           const cta = formatCtaBlock(name, err.cta)
           await write({
             ok: false,
-            error: { code: err.code, message: err.message, ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined) },
-            meta: { command: path, duration: `${Math.round(performance.now() - start)}ms`, ...(cta ? { cta } : undefined) },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+            },
+            meta: {
+              command: path,
+              duration: `${Math.round(performance.now() - start)}ms`,
+              ...(cta ? { cta } : undefined),
+            },
           })
           exit(err.exitCode ?? 1)
         }
         const composed = fetchMiddleware.reduceRight(
-          (next: () => Promise<void>, mw) => async () => { await handleMwSentinel(await mw(mwCtx, next)) },
+          (next: () => Promise<void>, mw) => async () => {
+            await handleMwSentinel(await mw(mwCtx, next))
+          },
           runFetch,
         )
         await composed()
@@ -1395,15 +1611,18 @@ async function serveImpl(
     if (isSentinel(awaited)) {
       const cta = formatCtaBlock(name, awaited.cta)
       if (awaited[sentinel] === 'ok') {
-        await write({
-          ok: true,
-          data: awaited.data,
-          meta: {
-            command: path,
-            duration: `${Math.round(performance.now() - start)}ms`,
-            ...(cta ? { cta } : undefined),
+        await write(
+          {
+            ok: true,
+            data: awaited.data,
+            meta: {
+              command: path,
+              duration: `${Math.round(performance.now() - start)}ms`,
+              ...(cta ? { cta } : undefined),
+            },
           },
-        }, command.output)
+          command.output,
+        )
       } else {
         const err = awaited as ErrorResult
         await write({
@@ -1422,14 +1641,17 @@ async function serveImpl(
         exit(err.exitCode ?? 1)
       }
     } else {
-      await write({
-        ok: true,
-        data: awaited,
-        meta: {
-          command: path,
-          duration: `${Math.round(performance.now() - start)}ms`,
+      await write(
+        {
+          ok: true,
+          data: awaited,
+          meta: {
+            command: path,
+            duration: `${Math.round(performance.now() - start)}ms`,
+          },
         },
-      }, command.output)
+        command.output,
+      )
     }
   }
 
@@ -1523,11 +1745,16 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
-    mcpHandler?: ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>) | undefined
+    mcpHandler?:
+      | ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>)
+      | undefined
     middlewares?: MiddlewareHandler[] | undefined
     rootCommand?: CommandDefinition<any, any, any> | undefined
     sanitize?:
-      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
           output: unknown
           blocked: boolean
           warnings?: string[] | undefined
@@ -1542,7 +1769,10 @@ function createMcpHttpHandler(
   name: string,
   version: string,
   sanitize?:
-    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+    | ((
+        output: unknown,
+        context: { command: string; agent: boolean },
+      ) => Promise<{
         output: unknown
         blocked: boolean
         warnings?: string[] | undefined
@@ -1552,43 +1782,46 @@ function createMcpHttpHandler(
   let transport: any
 
   return async (req: Request, commands: Map<string, CommandEntry>): Promise<Response> => {
-    if (!transport) {
-      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
-      const { WebStandardStreamableHTTPServerTransport } = await import(
-        '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-      )
+    try {
+      if (!transport) {
+        const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
+        const { WebStandardStreamableHTTPServerTransport } =
+          await import('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js')
 
-      const server = new McpServer({ name, version })
+        const server = new McpServer({ name, version })
 
-      for (const tool of Mcp.collectTools(commands, [])) {
-        const optionsSchema = getEffectiveOptionsSchema(tool.command)
-        const mergedShape: Record<string, any> = {
-          ...tool.command.args?.shape,
-          ...optionsSchema?.shape,
+        for (const tool of Mcp.collectTools(commands, [])) {
+          const optionsSchema = getEffectiveOptionsSchema(tool.command)
+          const mergedShape: Record<string, any> = {
+            ...tool.command.args?.shape,
+            ...optionsSchema?.shape,
+          }
+          const hasInput = Object.keys(mergedShape).length > 0
+
+          server.registerTool(
+            tool.name,
+            {
+              ...(tool.description ? { description: tool.description } : undefined),
+              ...(hasInput ? { inputSchema: mergedShape } : undefined),
+            },
+            async (...callArgs: any[]) => {
+              const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
+              const extra = hasInput ? callArgs[1] : callArgs[0]
+              return Mcp.callTool(tool, params, extra, sanitize)
+            },
+          )
         }
-        const hasInput = Object.keys(mergedShape).length > 0
 
-        server.registerTool(
-          tool.name,
-          {
-            ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: mergedShape } : undefined),
-          },
-          async (...callArgs: any[]) => {
-            const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            const extra = hasInput ? callArgs[1] : callArgs[0]
-            return Mcp.callTool(tool, params, extra, sanitize)
-          },
-        )
+        transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: () => crypto.randomUUID(),
+          enableJsonResponse: true,
+        })
+        await server.connect(transport)
       }
-
-      transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        enableJsonResponse: true,
-      })
-      await server.connect(transport)
+      return transport.handleRequest(req)
+    } catch (error) {
+      return renderPendingFetchError(name, error)
     }
-    return transport.handleRequest(req)
   }
 }
 
@@ -1653,12 +1886,12 @@ async function fetchImpl(
 
   // Parse options from search params (GET) or body (non-GET)
   let inputOptions: Record<string, unknown> = {}
-  if (req.method === 'GET')
-    for (const [key, value] of url.searchParams) inputOptions[key] = value
+  if (req.method === 'GET') for (const [key, value] of url.searchParams) inputOptions[key] = value
   else {
     try {
       const contentType = req.headers.get('content-type') ?? ''
-      if (contentType.includes('application/json')) inputOptions = (await req.json()) as Record<string, unknown>
+      if (contentType.includes('application/json'))
+        inputOptions = (await req.json()) as Record<string, unknown>
     } catch {}
   }
 
@@ -1675,7 +1908,11 @@ async function fetchImpl(
     if (options.rootCommand)
       return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' }, meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' },
+        meta: { command: '/', duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
   }
@@ -1684,18 +1921,31 @@ async function fetchImpl(
 
   if ('error' in resolved)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.` }, meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.`,
+        },
+        meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
 
   if ('help' in resolved)
     return jsonResponse(
-      { ok: false, error: { code: 'COMMAND_NOT_FOUND', message: `'${resolved.path}' is a command group. Specify a subcommand.` }, meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` } },
+      {
+        ok: false,
+        error: {
+          code: 'COMMAND_NOT_FOUND',
+          message: `'${resolved.path}' is a command group. Specify a subcommand.`,
+        },
+        meta: { command: resolved.path, duration: `${Math.round(performance.now() - start)}ms` },
+      },
       404,
     )
 
-  if ('fetchGateway' in resolved)
-    return resolved.fetchGateway.fetch(req)
+  if ('fetchGateway' in resolved) return resolved.fetchGateway.fetch(req)
 
   const { command, path, rest } = resolved
   return executeCommand(path, command, rest, inputOptions, start, options)
@@ -1732,9 +1982,13 @@ async function executeCommand(
         },
     status: number,
   ) {
-    const warnings = [...new Set([...(body.ok ? [] : (body.meta.warnings ?? []))])]
+    const warnings = [...new Set(body.ok ? [] : (body.meta.warnings ?? []))]
     const target = body.ok ? body.data : body.error
-    const sanitized = await Sanitize.sanitize(target, { command: path, agent: true }, options.sanitize)
+    const sanitized = await Sanitize.sanitize(
+      target,
+      { command: path, agent: true },
+      options.sanitize,
+    )
 
     if (sanitized.warnings) warnings.push(...sanitized.warnings)
 
@@ -1818,8 +2072,11 @@ async function executeCommand(
     }
 
     const okFn = (data: unknown): never => ({ [sentinel_]: 'ok', data }) as never
-    const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never =>
-      ({ [sentinel_]: 'error', ...opts }) as never
+    const errorFn = (opts: {
+      code: string
+      message: string
+      exitCode?: number | undefined
+    }): never => ({ [sentinel_]: 'error', ...opts }) as never
 
     const result = command.run({
       agent: true,
@@ -1851,26 +2108,60 @@ async function executeCommand(
               }
               if (isSentinel(value) && (value as any)[sentinel] === 'error') {
                 const tagged = value as any
-                controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: 'error',
+                      ok: false,
+                      error: { code: tagged.code, message: tagged.message },
+                    }) + '\n',
+                  ),
+                )
                 controller.close()
                 return
               }
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'))
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              )
             }
             const meta: Record<string, unknown> = { command: path }
             if (isSentinel(returnValue) && (returnValue as any)[sentinel] === 'error') {
               const tagged = returnValue as any
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: tagged.code, message: tagged.message } }) + '\n'))
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: 'error',
+                    ok: false,
+                    error: { code: tagged.code, message: tagged.message },
+                  }) + '\n',
+                ),
+              )
             } else {
-              controller.enqueue(encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'))
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'done', ok: true, meta }) + '\n'),
+              )
             }
           } catch (error) {
-            controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', ok: false, error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } }) + '\n'))
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'error',
+                  ok: false,
+                  error: {
+                    code: 'UNKNOWN',
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                }) + '\n',
+              ),
+            )
           }
           controller.close()
         },
       })
-      response = new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
+      response = new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson' },
+      })
       return
     }
 
@@ -1896,16 +2187,27 @@ async function executeCommand(
       return
     }
 
-    response = await responseFor({ ok: true, data: awaited, meta: { command: path, duration } }, 200)
+    response = await responseFor(
+      { ok: true, data: awaited, meta: { command: path, duration } },
+      200,
+    )
   }
 
   try {
     const allMiddleware = options.middlewares ?? []
     if (allMiddleware.length > 0) {
-      const errorFn = (opts: { code: string; message: string; exitCode?: number | undefined }): never => {
+      const errorFn = (opts: {
+        code: string
+        message: string
+        exitCode?: number | undefined
+      }): never => {
         const duration = `${Math.round(performance.now() - start)}ms`
         responsePromise = responseFor(
-          { ok: false, error: { code: opts.code, message: opts.message }, meta: { command: path, duration } },
+          {
+            ok: false,
+            error: { code: opts.code, message: opts.message },
+            meta: { command: path, duration },
+          },
           500,
         )
         return undefined as never
@@ -1918,12 +2220,16 @@ async function executeCommand(
         format: 'json',
         formatExplicit: true,
         name: path,
-        set(key: string, value: unknown) { varsMap[key] = value },
+        set(key: string, value: unknown) {
+          varsMap[key] = value
+        },
         var: varsMap,
         version: undefined,
       }
       const composed = allMiddleware.reduceRight(
-        (next: () => Promise<void>, mw) => async () => { await mw(mwCtx, next) },
+        (next: () => Promise<void>, mw) => async () => {
+          await mw(mwCtx, next)
+        },
         runCommand,
       )
       await composed()
@@ -1934,11 +2240,22 @@ async function executeCommand(
     const duration = `${Math.round(performance.now() - start)}ms`
     if (error instanceof ValidationError)
       return responseFor(
-        { ok: false, error: { code: 'VALIDATION_ERROR', message: error.message }, meta: { command: path, duration } },
+        {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message: error.message },
+          meta: { command: path, duration },
+        },
         400,
       )
     return responseFor(
-      { ok: false, error: { code: error instanceof IncurError ? error.code : 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }, meta: { command: path, duration } },
+      {
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        meta: { command: path, duration },
+      },
       500,
     )
   }
@@ -2082,7 +2399,10 @@ declare namespace serveImpl {
     /** CLI-level default output policy. */
     outputPolicy?: OutputPolicy | undefined
     sanitize?:
-      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
           output: unknown
           blocked: boolean
           warnings?: string[] | undefined
@@ -2246,6 +2566,9 @@ function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap<Cli, Map<string, CommandEntry>>()
 
+/** @internal Maps CLI instances to pending async generator mounts. */
+const toPending = new WeakMap<Cli, Promise<void>[]>()
+
 /** @internal Maps CLI instances to their middleware arrays. */
 const toMiddlewares = new WeakMap<Cli, MiddlewareHandler[]>()
 
@@ -2383,7 +2706,8 @@ async function handleStreaming(
           }
         }
         if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
-        else if (ctx.renderOutput) ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
+        else if (ctx.renderOutput)
+          ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
 
       // Handle return value — error() or ok() sentinel
@@ -2599,6 +2923,7 @@ function collectCommands(
   mutates?: boolean | undefined
   destructive?: boolean | undefined
   paginate?: boolean | undefined
+  extensions?: Record<string, unknown> | undefined
   openapi?: Record<string, unknown> | undefined
 }[] {
   const result: ReturnType<typeof collectCommands> = []
@@ -2626,6 +2951,7 @@ function describeCommand(
   mutates?: boolean | undefined
   destructive?: boolean | undefined
   paginate?: boolean | undefined
+  extensions?: Record<string, unknown> | undefined
   openapi?: Record<string, unknown> | undefined
 } {
   const cmd: ReturnType<typeof collectCommands>[number] = { name: path.join(' ') }
@@ -2633,6 +2959,7 @@ function describeCommand(
   if (entry.mutates) cmd.mutates = true
   if (entry.destructive) cmd.destructive = true
   if (entry.paginate) cmd.paginate = true
+  if (entry.extensions) cmd.extensions = entry.extensions
   if (entry.openapi) cmd.openapi = entry.openapi as Record<string, unknown>
 
   const inputSchema = buildInputSchema(
@@ -2894,6 +3221,8 @@ type CommandDefinition<
   env?: env | undefined
   /** Usage examples for this command. */
   examples?: Example<args, options>[] | undefined
+  /** Generator-specific metadata that should flow through runtime introspection. */
+  extensions?: Record<string, unknown> | undefined
   /** Default output format. Overridden by `--format` or `--json`. */
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */

@@ -11,6 +11,15 @@ importers:
 
   .:
     dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.11.0
+        version: 2.11.0
+      '@connectrpc/connect':
+        specifier: ^2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.11.0)
+      '@connectrpc/connect-node':
+        specifier: ^2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.11.0)(@connectrpc/connect@2.1.1(@bufbuild/protobuf@2.11.0))
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -119,6 +128,9 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
+  '@bufbuild/protobuf@2.11.0':
+    resolution: {integrity: sha512-sBXGT13cpmPR5BMgHE6UEEfEaShh5Ror6rfN3yEK5si7QVrtZg8LEPQb0VVhiLRUslD2yLnXtnRzG035J/mZXQ==}
+
   '@changesets/apply-release-plan@7.0.14':
     resolution: {integrity: sha512-ddBvf9PHdy2YY0OUiEl3TV78mH9sckndJR14QAt87KLEbIov81XO0q0QAmvooBxXlqRRP8I9B7XOzZwQG7JkWA==}
 
@@ -179,6 +191,18 @@ packages:
 
   '@clack/prompts@1.0.1':
     resolution: {integrity: sha512-/42G73JkuYdyWZ6m8d/CJtBrGl1Hegyc7Fy78m5Ob+jF85TOUmLR5XLce/U3LxYAw0kJ8CT5aI99RIvPHcGp/Q==}
+
+  '@connectrpc/connect-node@2.1.1':
+    resolution: {integrity: sha512-s3TfsI1XF+n+1z6MBS9rTnFsxxR4Rw5wmdEnkQINli81ESGxcsfaEet8duzq8LVuuCupmhUsgpRo0Nv9pZkufg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
+      '@connectrpc/connect': 2.1.1
+
+  '@connectrpc/connect@2.1.1':
+    resolution: {integrity: sha512-JzhkaTvM73m2K1URT6tv53k2RwngSmCXLZJgK580qNQOXRzZRR/BCMfZw3h+90JpnG6XksP5bYT+cz0rpUzUWQ==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
 
   '@esbuild/aix-ppc64@0.27.3':
     resolution: {integrity: sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg==}
@@ -1879,6 +1903,8 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
+  '@bufbuild/protobuf@2.11.0': {}
+
   '@changesets/apply-release-plan@7.0.14':
     dependencies:
       '@changesets/config': 3.1.2
@@ -2033,6 +2059,15 @@ snapshots:
       '@clack/core': 1.0.1
       picocolors: 1.1.1
       sisteransi: 1.0.5
+
+  '@connectrpc/connect-node@2.1.1(@bufbuild/protobuf@2.11.0)(@connectrpc/connect@2.1.1(@bufbuild/protobuf@2.11.0))':
+    dependencies:
+      '@bufbuild/protobuf': 2.11.0
+      '@connectrpc/connect': 2.1.1(@bufbuild/protobuf@2.11.0)
+
+  '@connectrpc/connect@2.1.1(@bufbuild/protobuf@2.11.0)':
+    dependencies:
+      '@bufbuild/protobuf': 2.11.0
 
   '@esbuild/aix-ppc64@0.27.3':
     optional: true

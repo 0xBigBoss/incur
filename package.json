@@ -46,6 +46,9 @@
     "SKILL.md"
   ],
   "dependencies": {
+    "@bufbuild/protobuf": "^2.11.0",
+    "@connectrpc/connect": "^2.1.1",
+    "@connectrpc/connect-node": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@readme/openapi-parser": "^6.0.0",
     "@toon-format/toon": "^2.1.0",

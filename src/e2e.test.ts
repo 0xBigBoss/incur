@@ -1,4 +1,7 @@
-import { Cli, Errors, Skill, Typegen, z } from 'incur'
+import { Cli, Errors, Plugins, Skill, Typegen, z } from 'incur'
+
+import { startTestServer } from '../test/fixtures/connectrpc/server.js'
+import { UserService } from '../test/fixtures/connectrpc/user_pb.js'
 import { app as honoApp } from '../test/fixtures/hono-api.js'
 
 let __mockSkillsHash: string | undefined
@@ -432,7 +435,13 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('--token-limit and --token-offset together for pagination', async () => {
-    const { output } = await serve(createApp(), ['ping', '--token-offset', '2', '--token-limit', '4'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--token-offset',
+      '2',
+      '--token-limit',
+      '4',
+    ])
     expect(output).toMatchInlineSnapshot(`
       " true
       [truncated: showing tokens 2–3 of 3]
@@ -449,7 +458,14 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('works with --verbose', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '20'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '20',
+    ])
     expect(output).toMatchInlineSnapshot(`
       "{
         "ok": true,
@@ -466,13 +482,27 @@ describe('--token-limit and --token-offset', () => {
   })
 
   test('--verbose includes meta.nextOffset when truncated', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '2'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '2',
+    ])
     expect(output).toContain('"nextOffset"')
     expect(output).toContain('[truncated:')
   })
 
   test('--verbose omits meta.nextOffset when not truncated', async () => {
-    const { output } = await serve(createApp(), ['ping', '--verbose', '--format', 'json', '--token-limit', '10000'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--verbose',
+      '--format',
+      'json',
+      '--token-limit',
+      '10000',
+    ])
     const parsed = json(output)
     expect(parsed.meta.nextOffset).toBeUndefined()
   })
@@ -499,7 +529,12 @@ describe('--token-count', () => {
   })
 
   test('works with --filter-output', async () => {
-    const { output } = await serve(createApp(), ['ping', '--filter-output', 'pong', '--token-count'])
+    const { output } = await serve(createApp(), [
+      'ping',
+      '--filter-output',
+      'pong',
+      '--token-count',
+    ])
     expect(output.trim()).toBe('1')
   })
 })
@@ -2188,12 +2223,7 @@ describe('fetch gateway', () => {
   })
 
   test('implicit POST with --body', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'users',
-      '--body',
-      '{"name":"Eve"}',
-    ])
+    const { output } = await serve(createApp(), ['api', 'users', '--body', '{"name":"Eve"}'])
     expect(output).toMatchInlineSnapshot(`
       "created: true
       name: Eve
@@ -2202,13 +2232,7 @@ describe('fetch gateway', () => {
   })
 
   test('DELETE with --method', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'users',
-      '1',
-      '--method',
-      'DELETE',
-    ])
+    const { output } = await serve(createApp(), ['api', 'users', '1', '--method', 'DELETE'])
     expect(output).toMatchInlineSnapshot(`
       "deleted: true
       id: 1
@@ -2240,13 +2264,7 @@ describe('fetch gateway', () => {
   })
 
   test('--verbose wraps in envelope', async () => {
-    const { output } = await serve(createApp(), [
-      'api',
-      'health',
-      '--verbose',
-      '--format',
-      'json',
-    ])
+    const { output } = await serve(createApp(), ['api', 'health', '--verbose', '--format', 'json'])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
     expect(parsed.data).toEqual({ ok: true })
@@ -2298,7 +2316,10 @@ describe('fetch gateway', () => {
 
   test('streaming NDJSON --format jsonl', async () => {
     const { output } = await serve(createApp(), ['api', 'stream', '--format', 'jsonl'])
-    const lines = output.trim().split('\n').map((l) => JSON.parse(l))
+    const lines = output
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
     expect(lines[0]).toEqual({ type: 'chunk', data: { progress: 1 } })
     expect(lines[1]).toEqual({ type: 'chunk', data: { progress: 2 } })
     expect(lines[2].type).toBe('done')
@@ -2374,7 +2395,8 @@ describe('fetch api', () => {
 
   test('GET with query params → options', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/echo/hi?prefix=yo'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/echo/hi?prefix=yo')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2420,7 +2442,8 @@ describe('fetch api', () => {
 
   test('trailing path segments → positional args', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/project/get/p1'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/project/get/p1')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2447,7 +2470,8 @@ describe('fetch api', () => {
 
   test('nested command (3 levels deep)', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/project/deploy/status/d-456'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/project/deploy/status/d-456')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {
@@ -2488,7 +2512,8 @@ describe('fetch api', () => {
 
   test('IncurError → 500 with code', async () => {
     const cli = createApp()
-    expect(await fetchJson(cli, new Request('http://localhost/explode-clac'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/explode-clac')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "error": {
@@ -2519,7 +2544,10 @@ describe('fetch api', () => {
     const res = await cli.fetch(new Request('http://localhost/stream'))
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/x-ndjson')
-    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l))
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
     expect(lines).toMatchInlineSnapshot(`
       [
         {
@@ -2585,7 +2613,9 @@ describe('fetch api', () => {
 
   test('middleware error → error response', async () => {
     const cli = Cli.create('test')
-    cli.use((c) => { c.error({ code: 'FORBIDDEN', message: 'nope' }) })
+    cli.use((c) => {
+      c.error({ code: 'FORBIDDEN', message: 'nope' })
+    })
     cli.command('secret', { run: () => ({ secret: true }) })
     expect(await fetchJson(cli, new Request('http://localhost/secret'))).toMatchInlineSnapshot(`
       {
@@ -2685,7 +2715,7 @@ describe('fetch api', () => {
           "config",
           "echo",
           "explode",
-          "explode-clac",
+          "explode_clac",
           "noop",
           "ping",
           "project_create",
@@ -2697,11 +2727,11 @@ describe('fetch api', () => {
           "project_list",
           "slow",
           "stream",
-          "stream-error",
-          "stream-ok",
-          "stream-text",
-          "stream-throw",
-          "validate-fail",
+          "stream_error",
+          "stream_ok",
+          "stream_text",
+          "stream_throw",
+          "validate_fail",
         ]
       `)
     })
@@ -2892,6 +2922,109 @@ describe('.well-known/skills', () => {
     const cli = createApp()
     const result = await fetchSkills(cli, '/.well-known/skills/bad-path')
     expect(result.status).toBe(404)
+  })
+})
+
+describe('connectRpc e2e', () => {
+  test('raw JSON request input works on generated commands', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          positionals: {
+            getUser: ['userId'],
+          },
+        }),
+      )
+
+      const { output } = await serve(cli, [
+        'users',
+        'list-users',
+        '--json',
+        '{"status":"disabled","page":{"pageSize":2,"cursor":"cursor-1"}}',
+        '--format',
+        'json',
+      ])
+
+      expect(json(output)).toMatchObject({
+        nextCursor: 'cursor-1-next',
+        users: [{ status: 'disabled' }, { status: 'disabled' }],
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('server-streaming generated commands support jsonl output', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+        }),
+      )
+
+      const { output } = await serve(cli, ['users', 'watch-users', '--format', 'jsonl'])
+      expect(
+        output
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+      ).toMatchObject([
+        { type: 'chunk', data: { eventType: 'updated' } },
+        { type: 'chunk', data: { eventType: 'deleted' } },
+        { type: 'done', ok: true },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('generated RPC failures surface stable structured errors', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          positionals: {
+            getUser: ['userId'],
+          },
+        }),
+      )
+
+      const { output, exitCode } = await serve(cli, [
+        'users',
+        'get-user',
+        'bad',
+        '--format',
+        'json',
+      ])
+
+      expect(exitCode).toBe(1)
+      expect(json(output)).toMatchObject({
+        code: 'RPC_INVALID_ARGUMENT',
+        message: 'user id is invalid',
+        retryable: false,
+      })
+    } finally {
+      await server.close()
+    }
   })
 })
 

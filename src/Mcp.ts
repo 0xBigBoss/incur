@@ -2,10 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Readable, Writable } from 'node:stream'
 
-import {
-  getEffectiveOptionsSchema,
-  resolveCommandOptions,
-} from './CommandOptions.js'
+import { getEffectiveOptionsSchema, resolveCommandOptions } from './CommandOptions.js'
+import { IncurError } from './Errors.js'
 import * as Sanitize from './Sanitize.js'
 import * as Schema from './Schema.js'
 
@@ -56,7 +54,10 @@ export declare namespace serve {
     output?: Writable | undefined
     /** Sanitizes tool output before it is returned to the agent. */
     sanitize?:
-      | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
           output: unknown
           blocked: boolean
           warnings?: string[] | undefined
@@ -74,7 +75,10 @@ export async function callTool(
     sendNotification?: (n: any) => Promise<void>
   },
   sanitize?:
-    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+    | ((
+        output: unknown,
+        context: { command: string; agent: boolean },
+      ) => Promise<{
         output: unknown
         blocked: boolean
         warnings?: string[] | undefined
@@ -173,20 +177,42 @@ export type ToolEntry = {
 
 /** @internal Recursively collects leaf commands as tool entries. */
 export function collectTools(commands: Map<string, any>, prefix: string[]): ToolEntry[] {
+  const seen = new Map<string, string>()
   const result: ToolEntry[] = []
+  collect(commands, prefix, seen, result)
+  return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function collect(
+  commands: Map<string, any>,
+  prefix: string[],
+  seen: Map<string, string>,
+  result: ToolEntry[],
+) {
   for (const [name, entry] of commands) {
     const path = [...prefix, name]
-    if ('_group' in entry && entry._group) result.push(...collectTools(entry.commands, path))
-    else {
-      result.push({
-        name: path.join('_'),
-        description: formatDescription(entry),
-        inputSchema: buildToolSchema(entry.args, getEffectiveOptionsSchema(entry)),
-        command: entry,
-      })
+    if ('_group' in entry && entry._group) {
+      collect(entry.commands, path, seen, result)
+      continue
     }
+
+    const toolName = path.map((segment) => segment.replaceAll('-', '_')).join('_')
+    const commandPath = path.join(' ')
+    const existing = seen.get(toolName)
+    if (existing && existing !== commandPath)
+      throw new IncurError({
+        code: 'MCP_TOOL_NAME_COLLISION',
+        message: `MCP tool name collision for '${toolName}': '${existing}' and '${commandPath}'`,
+      })
+
+    seen.set(toolName, commandPath)
+    result.push({
+      name: toolName,
+      description: formatDescription(entry),
+      inputSchema: buildToolSchema(entry.args, getEffectiveOptionsSchema(entry)),
+      command: entry,
+    })
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** @internal Builds a merged JSON Schema from args and options Zod schemas. */
@@ -224,11 +250,9 @@ function splitParams(
 }
 
 function formatDescription(command: any): string | undefined {
-  if (!command.description) return command.destructive
-    ? 'confirm with user before executing'
-    : undefined
-  if (command.destructive)
-    return `${command.description}. confirm with user before executing`
+  if (!command.description)
+    return command.destructive ? 'confirm with user before executing' : undefined
+  if (command.destructive) return `${command.description}. confirm with user before executing`
   return command.description
 }
 
@@ -236,7 +260,10 @@ async function renderToolResult(
   value: unknown,
   command: string,
   sanitize:
-    | ((output: unknown, context: { command: string; agent: boolean }) => Promise<{
+    | ((
+        output: unknown,
+        context: { command: string; agent: boolean },
+      ) => Promise<{
         output: unknown
         blocked: boolean
         warnings?: string[] | undefined

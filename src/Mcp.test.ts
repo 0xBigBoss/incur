@@ -1,5 +1,9 @@
-import { Mcp, z } from 'incur'
+import { Cli, Mcp, Plugins, z } from 'incur'
 import { PassThrough } from 'node:stream'
+
+import { startTestServer } from '../test/fixtures/connectrpc/server.js'
+import { UserService } from '../test/fixtures/connectrpc/user_pb.js'
+import { toCommands } from './Cli.js'
 
 function createTestCommands() {
   const commands = new Map<string, any>()
@@ -133,6 +137,14 @@ async function mcpSession(
   await done
 
   return chunks.map((c) => JSON.parse(c.trim()))
+}
+
+async function resolveCommands(cli: Cli.Cli) {
+  await cli.serve(['--llms', '--format', 'json'], {
+    exit() {},
+    stdout() {},
+  })
+  return toCommands.get(cli)!
 }
 
 describe('Mcp', () => {
@@ -348,5 +360,108 @@ describe('Mcp', () => {
     expect(progress[1].params.message).toBe('{"content":"world"}')
     expect(progress[0].params.progress).toBe(1)
     expect(progress[1].params.progress).toBe(2)
+  })
+
+  test('plugin-generated commands project to underscore MCP tool names', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          positionals: {
+            getUser: ['userId'],
+          },
+        }),
+      )
+
+      const commands = await resolveCommands(cli)
+      const names = Mcp.collectTools(commands, []).map((tool) => tool.name)
+      expect(names).toContain('users_get_user')
+      expect(names).toContain('users_list_users')
+      expect(names).toContain('users_watch_users')
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('CLI and MCP reuse the same generated handler behavior', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          positionals: {
+            getUser: ['userId'],
+          },
+        }),
+      )
+
+      let cliOutput = ''
+      await cli.serve(['users', 'get-user', 'u-1', '--format', 'json'], {
+        stdout(s) {
+          cliOutput += s
+        },
+        exit() {},
+      })
+
+      const commands = await resolveCommands(cli)
+      const tool = Mcp.collectTools(commands, []).find((entry) => entry.name === 'users_get_user')!
+      const result = await Mcp.callTool(tool, { userId: 'u-1' })
+
+      expect(JSON.parse(cliOutput)).toEqual(JSON.parse(result.content[0]!.text))
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('rejects duplicate MCP tool names after underscore projection', () => {
+    const commands = new Map<string, any>([
+      [
+        'foo-bar',
+        {
+          _group: true,
+          commands: new Map([
+            [
+              'baz',
+              {
+                run() {
+                  return { ok: true }
+                },
+              },
+            ],
+          ]),
+        },
+      ],
+      [
+        'foo',
+        {
+          _group: true,
+          commands: new Map([
+            [
+              'bar-baz',
+              {
+                run() {
+                  return { ok: true }
+                },
+              },
+            ],
+          ]),
+        },
+      ],
+    ])
+
+    expect(() => Mcp.collectTools(commands, [])).toThrow(
+      "MCP tool name collision for 'foo_bar_baz': 'foo-bar baz' and 'foo bar-baz'",
+    )
   })
 })
