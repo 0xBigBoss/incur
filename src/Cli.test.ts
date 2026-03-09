@@ -3915,7 +3915,7 @@ test('sanitize callback can block agent output', async () => {
   })
 })
 
-test('--llms scoped to command returns only that command schema', async () => {
+test('--llms-full scoped to command returns only that command schema', async () => {
   const cli = Cli.create('test').command('deploy', {
     mutates: true,
     args: z.object({ target: z.string() }),
@@ -3926,8 +3926,8 @@ test('--llms scoped to command returns only that command schema', async () => {
     },
   })
 
-  const { output } = await serve(cli, ['--llms', 'deploy', '--json'])
-  expect(JSON.parse(output)).toMatchObject({
+  const { output } = await serve(cli, ['--llms-full', 'deploy', '--json'])
+  expect(JSON.parse(output).commands[0]).toMatchObject({
     name: 'deploy',
     schema: {
       args: {
@@ -4164,6 +4164,25 @@ test('generated commands support scoped --llms and schema introspection', async 
               items: { type: 'string' },
               type: 'array',
             },
+          },
+        },
+      },
+    })
+
+    const llmsFull = await serve(cli, ['users', '--llms-full', '--format', 'json'])
+    expect(json(llmsFull.output).commands.find((c: any) => c.name === 'users delete-user')).toMatchObject({
+      destructive: true,
+      mutates: true,
+      schema: {
+        args: {
+          properties: {
+            userId: { type: 'string' },
+          },
+        },
+        options: {
+          properties: {
+            dryRun: { type: 'boolean', default: false },
+            reason: { type: 'string' },
           },
         },
       },

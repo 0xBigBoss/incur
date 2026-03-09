@@ -180,6 +180,30 @@ describe('index', () => {
   })
 })
 
+test('generateContext includes rules and commands', () => {
+  const result = Skill.generateContext(
+    'test',
+    [
+      { name: 'ping' },
+      { name: 'deploy destroy' },
+    ],
+    ['Confirm destructive actions with the user.'],
+  )
+
+  expect(result).toMatchInlineSnapshot(`
+    "# test Context
+
+    ## Rules
+
+    - Confirm destructive actions with the user.
+
+    ## Commands
+
+    - ping
+    - deploy destroy"
+  `)
+})
+
 describe('hash', () => {
   test('returns consistent hash for same commands', () => {
     const commands: Skill.CommandInfo[] = [

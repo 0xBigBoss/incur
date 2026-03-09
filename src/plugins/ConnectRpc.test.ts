@@ -84,4 +84,45 @@ describe('connectRpc', () => {
       await server.close()
     }
   })
+
+  test('carries explicit mutation metadata into generated manifests', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          positionals: {
+            deleteUser: ['userId'],
+          },
+          mutations: {
+            deleteUser: {
+              destructive: true,
+              mutates: true,
+            },
+          },
+        }),
+      )
+
+      const manifest = await serve(cli, ['users', '--llms-full', '--format', 'json'])
+      expect(JSON.parse(manifest.output).commands.find((c: any) => c.name === 'users delete-user'))
+        .toMatchObject({
+          destructive: true,
+          mutates: true,
+          schema: {
+            options: {
+              properties: {
+                dryRun: { default: false, type: 'boolean' },
+              },
+            },
+          },
+        })
+    } finally {
+      await server.close()
+    }
+  })
 })

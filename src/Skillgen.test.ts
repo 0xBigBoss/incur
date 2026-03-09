@@ -75,3 +75,22 @@ test('includes args, options, and examples in output', async () => {
   expect(content).toContain('Shout')
   expect(content).toContain('Greet the world')
 })
+
+test('includes injected safety options and hints for mutating commands', async () => {
+  const cli = Cli.create('tool', {
+    description: 'A tool',
+  }).command('destroy', {
+    description: 'Destroy a resource',
+    mutates: true,
+    destructive: true,
+    options: z.object({ force: z.boolean().default(false).describe('Force removal') }),
+    run: () => ({}),
+  })
+  vi.mocked(importCli).mockResolvedValue(cli)
+
+  const files = await generate('fake-input', tmp, 0)
+  const content = readFileSync(files[0]!, 'utf-8')
+  expect(content).toContain('`--dryRun`')
+  expect(content).toContain('Use `--dry-run` before executing this mutating command.')
+  expect(content).toContain('Confirm with the user before executing this destructive command.')
+})

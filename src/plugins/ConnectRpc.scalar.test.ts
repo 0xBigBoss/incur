@@ -1,4 +1,5 @@
 import { ScalarType } from '@bufbuild/protobuf'
+import { FeatureSet_FieldPresence } from '@bufbuild/protobuf/wkt'
 import { describe, expect, test, vi } from 'vitest'
 
 const { uploadBlob } = vi.hoisted(() => ({
@@ -25,15 +26,67 @@ import { toCommands } from '../Cli.js'
 import * as Mcp from '../Mcp.js'
 import { connectRpc } from './ConnectRpc.js'
 
-function scalarField(localName: string, scalar: ScalarType) {
+type TestField = {
+  [key: string]: unknown
+  fieldKind: string
+  localName: string
+}
+
+function scalarField(
+  localName: string,
+  scalar: ScalarType,
+  extra: Record<string, unknown> = {},
+) {
   return {
     fieldKind: 'scalar',
     localName,
+    presence: FeatureSet_FieldPresence.IMPLICIT,
+    scalar,
+    ...extra,
+  } as const
+}
+
+function messageField(
+  localName: string,
+  fieldMessage: {
+    field: Record<string, TestField>
+    fields: TestField[]
+    oneofs: readonly unknown[]
+    typeName: string
+  },
+) {
+  return {
+    fieldKind: 'message',
+    localName,
+    message: fieldMessage,
+    presence: FeatureSet_FieldPresence.EXPLICIT,
+  } as const
+}
+
+function listScalarField(localName: string, scalar: ScalarType) {
+  return {
+    fieldKind: 'list',
+    listKind: 'scalar',
+    localName,
+    presence: FeatureSet_FieldPresence.IMPLICIT,
     scalar,
   } as const
 }
 
-function message(typeName: string, fields: ReturnType<typeof scalarField>[]) {
+function mapScalarField(localName: string, scalar: ScalarType) {
+  return {
+    fieldKind: 'map',
+    localName,
+    mapKind: 'scalar',
+    presence: FeatureSet_FieldPresence.IMPLICIT,
+    scalar,
+  } as const
+}
+
+function message(
+  typeName: string,
+  fields: TestField[],
+) {
   return {
     field: Object.fromEntries(fields.map((field) => [field.localName, field])),
     fields,
@@ -70,6 +123,54 @@ async function resolveCommands(cli: Cli.Cli) {
 }
 
 describe('connectRpc scalar handling', () => {
+  test('enforces descriptor-required fields that are not positional', async () => {
+    uploadBlob.mockReset()
+    uploadBlob.mockImplementation(async (request: Record<string, unknown>) => request)
+
+    const input = message('acme.scalar.v1.UploadBlobRequest', [
+      scalarField('tenantId', ScalarType.STRING, {
+        presence: FeatureSet_FieldPresence.LEGACY_REQUIRED,
+      }),
+      scalarField('userId', ScalarType.STRING),
+    ])
+    const output = message('acme.scalar.v1.UploadBlobResponse', [
+      scalarField('tenantId', ScalarType.STRING),
+      scalarField('userId', ScalarType.STRING),
+    ])
+    const service = {
+      methods: [
+        {
+          input,
+          localName: 'uploadBlob',
+          methodKind: 'unary',
+          name: 'UploadBlob',
+          output,
+        },
+      ],
+      typeName: 'acme.scalar.v1.ScalarService',
+    } as const
+
+    const cli = Cli.create('acme').plugin(
+      'scalars',
+      connectRpc({
+        service: service as any,
+        transport: { baseUrl: 'https://example.test', protocol: 'connect' },
+      }),
+    )
+
+    const result = await serve(cli, [
+      'scalars',
+      'upload-blob',
+      '--userId',
+      'u-123',
+      '--format',
+      'json',
+    ])
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain('tenantId')
+    expect(uploadBlob).not.toHaveBeenCalled()
+  })
+
   test('rejects invalid base64 for bytes fields', async () => {
     uploadBlob.mockReset()
 
@@ -417,5 +518,60 @@ describe('connectRpc scalar handling', () => {
       signedCount: '-42',
       unsignedCount: '18446744073709551615',
     })
+  })
+
+  test('roundtrips nested messages, lists, and maps through --json input', async () => {
+    uploadBlob.mockReset()
+    uploadBlob.mockImplementation(async (request: Record<string, unknown>) => request)
+
+    const profile = message('acme.scalar.v1.Profile', [scalarField('name', ScalarType.STRING)])
+    const input = message('acme.scalar.v1.UploadBlobRequest', [
+      listScalarField('tags', ScalarType.STRING),
+      mapScalarField('labels', ScalarType.STRING),
+      messageField('profile', profile),
+    ])
+    const output = message('acme.scalar.v1.UploadBlobResponse', [
+      listScalarField('tags', ScalarType.STRING),
+      mapScalarField('labels', ScalarType.STRING),
+      messageField('profile', profile),
+    ])
+    const service = {
+      methods: [
+        {
+          input,
+          localName: 'uploadBlob',
+          methodKind: 'unary',
+          name: 'UploadBlob',
+          output,
+        },
+      ],
+      typeName: 'acme.scalar.v1.ScalarService',
+    } as const
+
+    const cli = Cli.create('acme').plugin(
+      'scalars',
+      connectRpc({
+        service: service as any,
+        transport: { baseUrl: 'https://example.test', protocol: 'connect' },
+      }),
+    )
+
+    const payload = {
+      labels: { team: 'api' },
+      profile: { name: 'alice' },
+      tags: ['alpha', 'beta'],
+    }
+
+    const result = await serve(cli, [
+      'scalars',
+      'upload-blob',
+      '--json',
+      JSON.stringify(payload),
+      '--format',
+      'json',
+    ])
+
+    expect(JSON.parse(result.output)).toEqual(payload)
+    expect(uploadBlob).toHaveBeenCalledWith(payload, { headers: undefined })
   })
 })

@@ -76,6 +76,27 @@ export function generate(
   return sections.join('\n\n')
 }
 
+/** Generates a CLI-level context file from rules and command names. */
+export function generateContext(
+  name: string,
+  commands: CommandInfo[],
+  rules: string[] = [],
+): string {
+  const lines = [`# ${name} Context`, '']
+
+  if (rules.length > 0) {
+    lines.push('## Rules')
+    lines.push('')
+    for (const rule of rules) lines.push(`- ${rule}`)
+    lines.push('')
+  }
+
+  lines.push('## Commands')
+  lines.push('')
+  for (const command of commands) lines.push(`- ${command.name}`)
+  return lines.join('\n')
+}
+
 /** Splits commands into skill files grouped by depth. */
 export function split(
   name: string,

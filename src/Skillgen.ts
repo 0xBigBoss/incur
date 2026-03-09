@@ -49,8 +49,17 @@ function collectEntries(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
-      if (entry.options) cmd.options = entry.options
+      const options = Cli.getCommandOptionsSchema(entry)
+      if (options) cmd.options = options
       if (entry.output) cmd.output = entry.output
+      if (entry.mutates)
+        cmd.hint = [cmd.hint, 'Use `--dry-run` before executing this mutating command.']
+          .filter(Boolean)
+          .join(' ')
+      if (entry.destructive)
+        cmd.hint = [cmd.hint, 'Confirm with the user before executing this destructive command.']
+          .filter(Boolean)
+          .join(' ')
       const examples = Cli.formatExamples(entry.examples)
       if (examples) {
         const cmdName = path.join(' ')

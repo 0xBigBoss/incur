@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import * as Cli from './Cli.js'
 import { formatExamples } from './Cli.js'
 import * as Agents from './internal/agents.js'
 import * as Skill from './Skill.js'
@@ -13,7 +14,7 @@ export async function sync(
   commands: Map<string, any>,
   options: sync.Options = {},
 ): Promise<sync.Result> {
-  const { depth = 1, description, global = true } = options
+  const { contextRules = [], depth = 1, description, global = true } = options
   const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
 
   const groups = new Map<string, string>()
@@ -33,6 +34,9 @@ export async function sync(
       const descMatch = file.content.match(/^description:\s*(.+)$/m)
       skills.push({ name: file.dir || name, description: descMatch?.[1] })
     }
+
+    const context = Skill.generateContext(name, entries, contextRules)
+    await fs.writeFile(path.join(cwd, 'CONTEXT.md'), `${context}\n`)
 
     // Include additional SKILL.md files matched by glob patterns
     if (options.include) {
@@ -83,6 +87,8 @@ export declare namespace sync {
   type Options = {
     /** Working directory for resolving `include` globs. Defaults to `process.cwd()`. */
     cwd?: string | undefined
+    /** Rules to include in generated `CONTEXT.md`. */
+    contextRules?: string[] | undefined
     /** Grouping depth for skill files. Defaults to `1`. */
     depth?: number | undefined
     /** CLI description, used as the top-level group description. */
@@ -130,8 +136,17 @@ function collectEntries(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
-      if (entry.options) cmd.options = entry.options
+      const options = Cli.getCommandOptionsSchema(entry)
+      if (options) cmd.options = options
       if (entry.output) cmd.output = entry.output
+      if (entry.mutates)
+        cmd.hint = [cmd.hint, 'Use `--dry-run` before executing this mutating command.']
+          .filter(Boolean)
+          .join(' ')
+      if (entry.destructive)
+        cmd.hint = [cmd.hint, 'Confirm with the user before executing this destructive command.']
+          .filter(Boolean)
+          .join(' ')
       const examples = formatExamples(entry.examples)
       if (examples) {
         const cmdName = entryPath.join(' ')

@@ -125,3 +125,30 @@ test('installed SKILL.md contains frontmatter', async () => {
 
   rmSync(tmp, { recursive: true, force: true })
 })
+
+test('writes CONTEXT.md with rules and command names', async () => {
+  const tmp = join(tmpdir(), `clac-context-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('my-tool', { description: 'A useful tool' })
+  cli.command('run', { description: 'Run something', run: () => ({}) })
+  cli.command('destroy', { description: 'Destroy something', mutates: true, destructive: true, run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  await SyncSkills.sync('my-tool', commands, {
+    global: false,
+    cwd: installDir,
+    contextRules: ['Confirm destructive actions with the user.'],
+  })
+
+  const content = readFileSync(join(installDir, 'CONTEXT.md'), 'utf8')
+  expect(content).toContain('# my-tool Context')
+  expect(content).toContain('Confirm destructive actions with the user.')
+  expect(content).toContain('- run')
+  expect(content).toContain('- destroy')
+
+  rmSync(tmp, { recursive: true, force: true })
+})

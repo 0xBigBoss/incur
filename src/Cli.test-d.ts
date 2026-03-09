@@ -247,6 +247,27 @@ test('middleware context has error() for short-circuiting', () => {
   })
 })
 
+test('plugin() contributes mounted command names and inferred schemas', () => {
+  const plugin = {
+    name: 'example',
+    async resolve(context: { mount: string }) {
+      return Cli.create(context.mount).command('hello', {
+        args: z.object({ name: z.string() }),
+        options: z.object({ loud: z.boolean().default(false) }),
+        run: () => ({ ok: true }),
+      })
+    },
+  }
+
+  const cli = Cli.create('test').plugin('generated', plugin)
+
+  type Commands = typeof cli extends Cli.Cli<infer commands> ? commands : never
+  expectTypeOf<Commands['generated hello']>().toEqualTypeOf<{
+    args: { name: string }
+    options: { loud: boolean }
+  }>()
+})
+
 test('middleware error() returns never', () => {
   middleware((c, _next) => {
     expectTypeOf(c.error).returns.toEqualTypeOf<never>()
