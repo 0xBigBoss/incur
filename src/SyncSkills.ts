@@ -16,6 +16,7 @@ export async function sync(
 ): Promise<sync.Result> {
   const { contextRules = [], depth = 1, description, global = true } = options
   const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
+  const contextPath = resolveContextPath({ cwd, global })
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
@@ -36,7 +37,8 @@ export async function sync(
     }
 
     const context = Skill.generateContext(name, entries, contextRules)
-    await fs.writeFile(path.join(cwd, 'CONTEXT.md'), `${context}\n`)
+    await fs.mkdir(path.dirname(contextPath), { recursive: true })
+    await fs.writeFile(contextPath, `${context}\n`)
 
     // Include additional SKILL.md files matched by glob patterns
     if (options.include) {
@@ -203,4 +205,9 @@ function readMeta(name: string): { hash: string; skills?: string[] } | undefined
 /** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
 export function readHash(name: string): string | undefined {
   return readMeta(name)?.hash
+}
+
+function resolveContextPath(options: { cwd: string; global: boolean }): string {
+  if (!options.global) return path.join(options.cwd, 'CONTEXT.md')
+  return path.join(os.homedir(), '.agents', 'CONTEXT.md')
 }

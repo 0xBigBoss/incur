@@ -2,6 +2,10 @@ import { Cli, Mcp, Plugins } from 'incur'
 
 import { startTestServer } from '../../test/fixtures/connectrpc/server.js'
 import { UserService } from '../../test/fixtures/connectrpc/user_pb.js'
+import {
+  introspection as graphqlIntrospection,
+  startTestServer as startGraphqlTestServer,
+} from '../../test/fixtures/graphql/server.js'
 import { toCommands } from '../Cli.js'
 
 type Subject = {
@@ -214,4 +218,84 @@ contract({
   fullCommandName: 'users delete-user',
   name: 'shared generated plugin contract',
   schemaPath: ['users', 'list-users'],
+})
+
+contract({
+  assertLlmsFull(command) {
+    expect(command).toMatchObject({
+      mutates: true,
+      name: 'graphql update-user',
+      schema: {
+        input: {
+          properties: {
+            input: {
+              properties: {
+                userId: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+    })
+  },
+  assertSchema(schema) {
+    expect(schema).toMatchObject({
+      name: 'graphql get-user',
+      schema: {
+        input: {
+          properties: {
+            userId: { type: 'string' },
+          },
+          required: ['userId'],
+        },
+      },
+    })
+  },
+  async create() {
+    const server = await startGraphqlTestServer()
+    return {
+      cli: Cli.create('acme').plugin(
+        'graphql',
+        Plugins.graphql({
+          schema: graphqlIntrospection,
+          transport: {
+            url: server.baseUrl,
+          },
+        }),
+      ),
+      close: server.close,
+    }
+  },
+  async createBroken() {
+    const server = await startGraphqlTestServer()
+    return {
+      cli: Cli.create('acme').plugin(
+        'graphql',
+        Plugins.graphql({
+          schema: 'type Query {',
+          transport: {
+            url: server.baseUrl,
+          },
+        }),
+      ),
+      close: server.close,
+    }
+  },
+  expectedCommands: [
+    'graphql delete-user',
+    'graphql get-user',
+    'graphql list-users',
+    'graphql raw',
+    'graphql update-user',
+  ],
+  expectedMcpTools: [
+    'graphql_delete_user',
+    'graphql_get_user',
+    'graphql_list_users',
+    'graphql_raw',
+    'graphql_update_user',
+  ],
+  fullCommandName: 'graphql update-user',
+  name: 'shared graphql plugin contract',
+  schemaPath: ['graphql', 'get-user'],
 })

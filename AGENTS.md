@@ -37,6 +37,12 @@
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
 
+## Plugin Conventions
+
+- **First-party generators use the shared internal mount path** — `connectRpc`, `graphql`, and future first-party generated plugins compile upstream definitions into `src/internal/generated/Operation.ts` and mount through `src/internal/generated/Mount.ts`. Do not add plugin-specific branching in `Cli`, `Mcp`, skill generation, or other runtime surfaces when shared generated metadata can carry it.
+- **GraphQL input-object args stay on the `--json` path** — generated GraphQL commands expose scalar, enum, and list root arguments as flags. Input-object arguments remain available through the synthesized `input` schema and the injected `--json` control option instead of ad hoc flattened flags.
+- **`graphql raw` is a fallback, not the primary UX** — keep generated root-field commands as the default GraphQL interface. `graphql raw` exists as an escape hatch for arbitrary documents and should still follow the shared safety/runtime surfaces.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).

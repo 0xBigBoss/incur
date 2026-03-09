@@ -171,6 +171,56 @@ describe('connectRpc scalar handling', () => {
     expect(uploadBlob).not.toHaveBeenCalled()
   })
 
+  test('enforces descriptor-required fields nested inside message inputs', async () => {
+    uploadBlob.mockReset()
+    uploadBlob.mockImplementation(async (request: Record<string, unknown>) => request)
+
+    const profile = message('acme.scalar.v1.Profile', [
+      scalarField('tenantId', ScalarType.STRING, {
+        presence: FeatureSet_FieldPresence.LEGACY_REQUIRED,
+      }),
+      scalarField('name', ScalarType.STRING),
+    ])
+    const input = message('acme.scalar.v1.UploadBlobRequest', [
+      messageField('profile', profile),
+    ])
+    const output = message('acme.scalar.v1.UploadBlobResponse', [
+      messageField('profile', profile),
+    ])
+    const service = {
+      methods: [
+        {
+          input,
+          localName: 'uploadBlob',
+          methodKind: 'unary',
+          name: 'UploadBlob',
+          output,
+        },
+      ],
+      typeName: 'acme.scalar.v1.ScalarService',
+    } as const
+
+    const cli = Cli.create('acme').plugin(
+      'scalars',
+      connectRpc({
+        service: service as any,
+        transport: { baseUrl: 'https://example.test', protocol: 'connect' },
+      }),
+    )
+
+    const result = await serve(cli, [
+      'scalars',
+      'upload-blob',
+      '--json',
+      JSON.stringify({ profile: { name: 'alice' } }),
+      '--format',
+      'json',
+    ])
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain('tenantId')
+    expect(uploadBlob).not.toHaveBeenCalled()
+  })
+
   test('rejects invalid base64 for bytes fields', async () => {
     uploadBlob.mockReset()
 

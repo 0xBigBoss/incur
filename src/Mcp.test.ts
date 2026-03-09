@@ -3,6 +3,10 @@ import { PassThrough } from 'node:stream'
 
 import { startTestServer } from '../test/fixtures/connectrpc/server.js'
 import { UserService } from '../test/fixtures/connectrpc/user_pb.js'
+import {
+  introspection as graphqlIntrospection,
+  startTestServer as startGraphqlTestServer,
+} from '../test/fixtures/graphql/server.js'
 import { toCommands } from './Cli.js'
 
 function createTestCommands() {
@@ -419,6 +423,30 @@ describe('Mcp', () => {
       const result = await Mcp.callTool(tool, { userId: 'u-1' })
 
       expect(JSON.parse(cliOutput)).toEqual(JSON.parse(result.content[0]!.text))
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('graphql-generated commands project to underscore MCP tool names', async () => {
+    const server = await startGraphqlTestServer()
+    try {
+      const cli = Cli.create('acme').plugin(
+        'graphql',
+        Plugins.graphql({
+          schema: graphqlIntrospection,
+          transport: {
+            url: server.baseUrl,
+          },
+        }),
+      )
+
+      const commands = await resolveCommands(cli)
+      const names = Mcp.collectTools(commands, []).map((tool) => tool.name)
+      expect(names).toContain('graphql_get_user')
+      expect(names).toContain('graphql_list_users')
+      expect(names).toContain('graphql_raw')
+      expect(names).toContain('graphql_update_user')
     } finally {
       await server.close()
     }

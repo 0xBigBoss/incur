@@ -125,4 +125,33 @@ describe('connectRpc', () => {
       await server.close()
     }
   })
+
+  test('fails fast when renamed methods collide on the same command name', async () => {
+    const server = await startTestServer('connect')
+    try {
+      const cli = Cli.create('acme').plugin(
+        'users',
+        Plugins.connectRpc({
+          service: UserService,
+          transport: {
+            baseUrl: server.baseUrl,
+            protocol: 'connect',
+          },
+          rename: {
+            getUser: 'user',
+            listUsers: 'user',
+          },
+        }),
+      )
+
+      const result = await serve(cli, ['users', '--help', '--format', 'json'])
+      expect(result.exitCode).toBe(1)
+      expect(JSON.parse(result.output)).toMatchObject({
+        code: 'PLUGIN_RESOLUTION_FAILED',
+      })
+      expect(result.output).toContain("Duplicate generated command name 'user'")
+    } finally {
+      await server.close()
+    }
+  })
 })

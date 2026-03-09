@@ -171,6 +171,12 @@ function walkSchema(
   if (!schema) return false
   if (index >= path.length) return true
 
+  const variants = schema.anyOf ?? schema.oneOf
+  if (Array.isArray(variants))
+    return variants.some((variant) =>
+      walkSchema(variant as Record<string, unknown> | undefined, path, index),
+    )
+
   const segment = path[index]!
   const type = schema.type as string | undefined
 

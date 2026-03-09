@@ -357,11 +357,13 @@ export function create(
         return renderPendingFetchError(name, error)
       }
       return fetchImpl(name, commands, req, {
+        envSchema: def.env,
         mcpHandler,
         middlewares,
         rootCommand: rootDef,
         sanitize: def.sanitize,
         vars: def.vars,
+        version: def.version,
       })
     },
 
@@ -1745,6 +1747,7 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    envSchema?: z.ZodObject<any> | undefined
     mcpHandler?:
       | ((req: Request, commands: Map<string, CommandEntry>) => Promise<Response>)
       | undefined
@@ -1761,6 +1764,7 @@ declare namespace fetchImpl {
         }>)
       | undefined
     vars?: z.ZodObject<any> | undefined
+    version?: string | undefined
   }
 }
 
@@ -1886,8 +1890,8 @@ async function fetchImpl(
 
   // Parse options from search params (GET) or body (non-GET)
   let inputOptions: Record<string, unknown> = {}
-  if (req.method === 'GET') for (const [key, value] of url.searchParams) inputOptions[key] = value
-  else {
+  const inputArgv = req.method === 'GET' ? searchParamsToArgv(url.searchParams) : undefined
+  if (req.method !== 'GET') {
     try {
       const contentType = req.headers.get('content-type') ?? ''
       if (contentType.includes('application/json'))
@@ -1906,7 +1910,7 @@ async function fetchImpl(
   if (segments.length === 0) {
     // Root path
     if (options.rootCommand)
-      return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
+      return executeCommand(name, options.rootCommand, [], inputOptions, inputArgv, start, options)
     return jsonResponse(
       {
         ok: false,
@@ -1945,10 +1949,18 @@ async function fetchImpl(
       404,
     )
 
-  if ('fetchGateway' in resolved) return resolved.fetchGateway.fetch(req)
+  if ('fetchGateway' in resolved)
+    return executeFetchGateway(
+      resolved.path,
+      resolved.fetchGateway,
+      req,
+      start,
+      options,
+      resolved.middlewares,
+    )
 
   const { command, path, rest } = resolved
-  return executeCommand(path, command, rest, inputOptions, start, options)
+  return executeCommand(path, command, rest, inputOptions, inputArgv, start, options, resolved.middlewares)
 }
 
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
@@ -1957,8 +1969,10 @@ async function executeCommand(
   command: CommandDefinition<any, any, any>,
   rest: string[],
   inputOptions: Record<string, unknown>,
+  inputArgv: string[] | undefined,
   start: number,
   options: fetchImpl.Options,
+  middlewares: MiddlewareHandler[] = [],
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
     return new Response(JSON.stringify(body), {
@@ -2045,13 +2059,23 @@ async function executeCommand(
   }
 
   const runCommand = async () => {
-    const { args } = Parser.parse(rest, { args: command.args })
     const effectiveOptionsSchema = getEffectiveOptionsSchema(command)
-    const parsedOptions = effectiveOptionsSchema ? effectiveOptionsSchema.parse(inputOptions) : {}
+    const { args, options: parsedOptions } = inputArgv
+      ? Parser.parse([...rest, ...inputArgv], {
+          alias: command.alias as Record<string, string> | undefined,
+          args: command.args,
+          options: effectiveOptionsSchema,
+        })
+      : {
+          args: Parser.parse(rest, { args: command.args }).args,
+          options: effectiveOptionsSchema ? effectiveOptionsSchema.parse(inputOptions) : {},
+        }
     const { control, options: resolvedOptions } = resolveCommandOptions(
       command,
       parsedOptions as Record<string, unknown>,
     )
+    const envSource = process.env
+    const env = command.env ? Parser.parseEnv(command.env, envSource) : {}
 
     if (control.dryRun) {
       response = await responseFor(
@@ -2062,7 +2086,7 @@ async function executeCommand(
             command: path,
             args,
             options: resolvedOptions,
-            env: {},
+            env,
           },
           meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
         },
@@ -2082,7 +2106,7 @@ async function executeCommand(
       agent: true,
       args,
       dryRun: control.dryRun,
-      env: {},
+      env,
       error: errorFn,
       format: 'json',
       formatExplicit: true,
@@ -2090,7 +2114,7 @@ async function executeCommand(
       ok: okFn,
       options: resolvedOptions,
       var: varsMap,
-      version: undefined,
+      version: options.version,
     })
 
     // Streaming path — async generator → NDJSON response
@@ -2194,7 +2218,12 @@ async function executeCommand(
   }
 
   try {
-    const allMiddleware = options.middlewares ?? []
+    const envSource = process.env
+    const allMiddleware = [
+      ...(options.middlewares ?? []),
+      ...middlewares,
+      ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
+    ]
     if (allMiddleware.length > 0) {
       const errorFn = (opts: {
         code: string
@@ -2215,7 +2244,7 @@ async function executeCommand(
       const mwCtx: MiddlewareContext = {
         agent: true,
         command: path,
-        env: {},
+        env: options.envSchema ? Parser.parseEnv(options.envSchema, envSource) : {},
         error: errorFn,
         format: 'json',
         formatExplicit: true,
@@ -2224,7 +2253,7 @@ async function executeCommand(
           varsMap[key] = value
         },
         var: varsMap,
-        version: undefined,
+        version: options.version,
       }
       const composed = allMiddleware.reduceRight(
         (next: () => Promise<void>, mw) => async () => {
@@ -2261,6 +2290,113 @@ async function executeCommand(
   }
 
   if (!response && responsePromise) response = await responsePromise
+  return response!
+}
+
+/** @internal Executes a resolved fetch gateway for the fetch handler and returns a Response. */
+async function executeFetchGateway(
+  path: string,
+  fetchGateway: InternalFetchGateway,
+  req: Request,
+  start: number,
+  options: fetchImpl.Options,
+  middlewares: MiddlewareHandler[] = [],
+): Promise<Response> {
+  function jsonResponse(body: unknown, status: number) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  const varsMap: Record<string, unknown> = options.vars ? options.vars.parse({}) : {}
+  let response: Response | undefined
+
+  const runFetch = async () => {
+    response = await fetchGateway.fetch(req)
+  }
+
+  try {
+    const envSource = process.env
+    const allMiddleware = [...(options.middlewares ?? []), ...middlewares]
+
+    if (allMiddleware.length > 0) {
+      const errorFn = (opts: {
+        code: string
+        exitCode?: number | undefined
+        message: string
+        retryable?: boolean | undefined
+        cta?: CtaBlock | undefined
+      }): never => {
+        return { [sentinel]: 'error', ...opts } as never
+      }
+      const mwCtx: MiddlewareContext = {
+        agent: true,
+        command: path,
+        env: options.envSchema ? Parser.parseEnv(options.envSchema, envSource) : {},
+        error: errorFn,
+        format: 'json',
+        formatExplicit: true,
+        name: path,
+        set(key: string, value: unknown) {
+          varsMap[key] = value
+        },
+        var: varsMap,
+        version: options.version,
+      }
+      const handleMwSentinel = async (result: unknown) => {
+        if (!isSentinel(result) || result[sentinel] !== 'error') return
+        const err = result as ErrorResult
+        response = jsonResponse(
+          {
+            ok: false,
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+            },
+            meta: {
+              command: path,
+              duration: `${Math.round(performance.now() - start)}ms`,
+            },
+          },
+          500,
+        )
+      }
+      const composed = allMiddleware.reduceRight(
+        (next: () => Promise<void>, mw) => async () => {
+          await handleMwSentinel(await mw(mwCtx, next))
+        },
+        runFetch,
+      )
+      await composed()
+    } else {
+      await runFetch()
+    }
+  } catch (error) {
+    const duration = `${Math.round(performance.now() - start)}ms`
+    if (error instanceof ValidationError)
+      return jsonResponse(
+        {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message: error.message },
+          meta: { command: path, duration },
+        },
+        400,
+      )
+    return jsonResponse(
+      {
+        ok: false,
+        error: {
+          code: error instanceof IncurError ? error.code : 'UNKNOWN',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        meta: { command: path, duration },
+      },
+      500,
+    )
+  }
+
   return response!
 }
 
@@ -2381,6 +2517,16 @@ function resolveCommand(
     rest: remaining,
     ...(outputPolicy ? { outputPolicy } : undefined),
   }
+}
+
+/** @internal Converts GET query params into argv-style flags so HTTP uses CLI parsing/coercion. */
+function searchParamsToArgv(searchParams: URLSearchParams): string[] {
+  const argv: string[] = []
+  for (const [key, value] of searchParams) {
+    argv.push(`--${key}`)
+    if (value.length > 0) argv.push(value)
+  }
+  return argv
 }
 
 /** @internal Options for serveImpl, extending public serve.Options with internal metadata. */

@@ -28,6 +28,8 @@ export function toCommandEntry(operation: Operation): CommandDefinition<any, any
  */
 export function toCommandEntries(operations: Operation[]) {
   return operations.reduce((commands, operation) => {
+    if (commands.has(operation.name))
+      throw new Error(`Duplicate generated command name '${operation.name}'`)
     commands.set(operation.name, toCommandEntry(operation))
     return commands
   }, new Map<string, CommandEntry>())
@@ -37,7 +39,10 @@ export function toCommandEntries(operations: Operation[]) {
  * Mounts generated operations into an existing command-entry map.
  */
 export function mountOperations(commands: Map<string, CommandEntry>, operations: Operation[]) {
-  for (const [name, entry] of toCommandEntries(operations)) commands.set(name, entry)
+  for (const [name, entry] of toCommandEntries(operations)) {
+    if (commands.has(name)) throw new Error(`Duplicate generated command name '${name}'`)
+    commands.set(name, entry)
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Cli, SyncSkills } from 'incur'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -151,4 +151,48 @@ test('writes CONTEXT.md with rules and command names', async () => {
   expect(content).toContain('- destroy')
 
   rmSync(tmp, { recursive: true, force: true })
+})
+
+test('global sync writes CONTEXT.md to the canonical agent directory instead of the package root', async () => {
+  const tmp = join(tmpdir(), `clac-global-context-test-${Date.now()}`)
+  const homeDir = join(tmp, 'home')
+  const packageRoot = join(tmp, 'pkg')
+  const binPath = join(packageRoot, 'dist', 'bin.js')
+  mkdirSync(homeDir, { recursive: true })
+  mkdirSync(join(packageRoot, 'dist'), { recursive: true })
+  writeFileSync(join(packageRoot, 'package.json'), '{}\n')
+  writeFileSync(binPath, '')
+
+  const savedHome = process.env.HOME
+  const savedArgv1 = process.argv[1]
+
+  try {
+    process.env.HOME = homeDir
+    process.argv[1] = binPath
+    vi.resetModules()
+
+    const FreshCli = await import('./Cli.js')
+    const FreshSyncSkills = await import('./SyncSkills.js')
+
+    const cli = FreshCli.create('my-tool', { description: 'A useful tool' })
+    cli.command('run', { description: 'Run something', run: () => ({}) })
+
+    const commands = FreshCli.toCommands.get(cli)!
+    await FreshSyncSkills.sync('my-tool', commands, {
+      contextRules: ['Confirm destructive actions with the user.'],
+    })
+
+    expect(existsSync(join(packageRoot, 'CONTEXT.md'))).toBe(false)
+
+    const content = readFileSync(join(homeDir, '.agents', 'CONTEXT.md'), 'utf8')
+    expect(content).toContain('# my-tool Context')
+    expect(content).toContain('Confirm destructive actions with the user.')
+    expect(content).toContain('- run')
+  } finally {
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    process.argv[1] = savedArgv1
+    vi.resetModules()
+    rmSync(tmp, { recursive: true, force: true })
+  }
 })

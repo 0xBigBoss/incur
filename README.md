@@ -259,6 +259,57 @@ $ my-cli --help
 Mount any HTTP server as a command with the `fetch` property. Supports any API
 framework that exposes a [Web Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) handler.
 
+### First-party generator plugins
+
+`incur` keeps the public plugin API small: mount generated command groups with `cli.plugin(name, plugin)`, and use the built-in first-party factories under `Plugins.*`.
+Internally, first-party generators compile upstream API definitions into a shared generated-operation model so CLI mounting, `schema`, `--llms`, Skills sync, and MCP stay consistent across plugins.
+
+```ts
+import { Cli, Plugins } from 'incur'
+import { UserService } from './gen/user_pb.js'
+import { introspection } from './graphql-schema.js'
+
+Cli.create('acme')
+  .plugin(
+    'users',
+    Plugins.connectRpc({
+      service: UserService,
+      transport: {
+        baseUrl: 'https://api.acme.dev',
+        protocol: 'connect',
+      },
+      positionals: {
+        getUser: ['userId'],
+      },
+    }),
+  )
+  .plugin(
+    'graphql',
+    Plugins.graphql({
+      schema: introspection,
+      transport: {
+        url: 'https://api.acme.dev/graphql',
+      },
+    }),
+  )
+```
+
+The generated commands participate in the same runtime surfaces as handwritten commands: `schema`, `--llms`, `--llms-full`, Skills sync, MCP generation, and safety metadata.
+
+`Plugins.graphql()` is schema-first. Root `Query` and `Mutation` fields become commands, default selection sets are synthesized from the schema, and nested input objects flow through the generated `input` schema plus the injected `--json` option.
+It supports curated overrides for `include`, `exclude`, `rename`, `positionals`, `scalars`, mutation safety metadata, and selection depth.
+`graphql raw` remains an escape hatch for arbitrary documents rather than the primary developer experience.
+
+```sh
+$ acme graphql get-user --userId u-1 --format json
+
+$ acme graphql update-user --json '{"input":{"userId":"u-1","email":"u-1@acme.dev"}}'
+
+$ acme graphql raw --query 'query GetUser($userId: ID!) { getUser(userId: $userId) { id email } }' \
+    --variables '{"userId":"u-1"}' \
+    --operation-name GetUser
+```
+
 The CLI translates HTTP requests using curl-style flags.
 
 ```ts

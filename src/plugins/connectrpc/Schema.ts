@@ -107,7 +107,12 @@ function createFieldSchema(
       case 'map':
         return z.record(z.string(), createMapSchema(field, mode, cache))
       case 'message':
-        return createMessageSchema(field.message, mode, new Set(), cache)
+        return createMessageSchema(
+          field.message,
+          mode,
+          mode === 'input' ? createRequiredFields(field.message, []) : new Set(),
+          cache,
+        )
       case 'scalar':
         return scalarToZod(field.scalar)
     }
@@ -126,7 +131,12 @@ function createListSchema(
     case 'enum':
       return createEnumSchema(field.enum, mode)
     case 'message':
-      return createMessageSchema(field.message, mode, new Set(), cache)
+      return createMessageSchema(
+        field.message,
+        mode,
+        mode === 'input' ? createRequiredFields(field.message, []) : new Set(),
+        cache,
+      )
     case 'scalar':
       return scalarToZod(field.scalar)
   }
@@ -141,7 +151,12 @@ function createMapSchema(
     case 'enum':
       return createEnumSchema(field.enum, mode)
     case 'message':
-      return createMessageSchema(field.message, mode, new Set(), cache)
+      return createMessageSchema(
+        field.message,
+        mode,
+        mode === 'input' ? createRequiredFields(field.message, []) : new Set(),
+        cache,
+      )
     case 'scalar':
       return scalarToZod(field.scalar)
   }

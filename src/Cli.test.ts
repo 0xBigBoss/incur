@@ -2,6 +2,10 @@ import { Cli, Errors, Plugins, z } from 'incur'
 
 import { startTestServer } from '../test/fixtures/connectrpc/server.js'
 import { UserService } from '../test/fixtures/connectrpc/user_pb.js'
+import {
+  introspection as graphqlIntrospection,
+  startTestServer as startGraphqlTestServer,
+} from '../test/fixtures/graphql/server.js'
 import { app } from '../test/fixtures/hono-api.js'
 import { spec } from '../test/fixtures/openapi-spec.js'
 import * as SyncSkills from './SyncSkills.js'
@@ -3872,6 +3876,41 @@ test('--fields warns on unknown output paths', async () => {
   })
 })
 
+test('--fields does not warn on valid paths for nullable output schemas', async () => {
+  const cli = Cli.create('test').command('get-user', {
+    output: z
+      .object({
+        id: z.string(),
+        name: z.string(),
+      })
+      .nullable(),
+    run() {
+      return {
+        id: 'u-1',
+        name: 'Alice',
+      }
+    },
+  })
+
+  const { output } = await serve(cli, [
+    'get-user',
+    '--fields',
+    'id',
+    '--verbose',
+    '--format',
+    'json',
+  ])
+
+  expect(json(output)).toMatchObject({
+    ok: true,
+    data: 'u-1',
+    meta: {
+      command: 'get-user',
+    },
+  })
+  expect(json(output).meta.warnings).toBeUndefined()
+})
+
 test('agent output is scanned for prompt injection warnings', async () => {
   const cli = Cli.create('test').command('show', {
     run() {
@@ -4183,6 +4222,62 @@ test('generated commands support scoped --llms and schema introspection', async 
           properties: {
             dryRun: { type: 'boolean', default: false },
             reason: { type: 'string' },
+          },
+        },
+      },
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test('graphql generated commands support scoped --llms and schema introspection', async () => {
+  const server = await startGraphqlTestServer()
+  try {
+    const cli = Cli.create('acme').plugin(
+      'graphql',
+      Plugins.graphql({
+        schema: graphqlIntrospection,
+        transport: {
+          url: server.baseUrl,
+        },
+      }),
+    )
+
+    const llms = await serve(cli, ['graphql', '--llms', '--format', 'json'])
+    expect(json(llms.output).commands.map((command: any) => command.name)).toEqual([
+      'graphql delete-user',
+      'graphql get-user',
+      'graphql list-users',
+      'graphql raw',
+      'graphql update-user',
+    ])
+
+    const schema = await serve(cli, ['schema', 'graphql', 'get-user', '--format', 'json'])
+    expect(json(schema.output)).toMatchObject({
+      name: 'graphql get-user',
+      schema: {
+        input: {
+          properties: {
+            userId: { type: 'string' },
+          },
+          required: ['userId'],
+        },
+      },
+    })
+
+    const llmsFull = await serve(cli, ['graphql', '--llms-full', '--format', 'json'])
+    expect(
+      json(llmsFull.output).commands.find((command: any) => command.name === 'graphql raw'),
+    ).toMatchObject({
+      mutates: true,
+      schema: {
+        options: {
+          properties: {
+            file: { type: 'string' },
+            operationName: { type: 'string' },
+            query: { type: 'string' },
+            variables: { type: 'string' },
           },
         },
       },
