@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'vitest'
 
+import { app as prefixedApp } from '../test/fixtures/hono-api-prefixed.js'
+import { app } from '../test/fixtures/hono-api.js'
+import { app as openapiApp, spec as openapiSpec } from '../test/fixtures/hono-openapi-app.js'
+import { spec } from '../test/fixtures/openapi-spec.js'
 import * as Cli from './Cli.js'
 import * as Openapi from './Openapi.js'
-import { app } from '../test/fixtures/hono-api.js'
-import { app as prefixedApp } from '../test/fixtures/hono-api-prefixed.js'
-import { spec } from '../test/fixtures/openapi-spec.js'
-import { app as openapiApp, spec as openapiSpec } from '../test/fixtures/hono-openapi-app.js'
 
 function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
   let output = ''
@@ -13,7 +13,9 @@ function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
   return cli
     .serve(argv, {
       stdout: (s) => (output += s),
-      exit: (c) => { exitCode = c },
+      exit: (c) => {
+        exitCode = c
+      },
     })
     .then(() => ({
       output,
@@ -22,9 +24,7 @@ function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
 }
 
 function json(output: string) {
-  return JSON.parse(
-    output.replace(/"duration": "[^"]+"/g, '"duration": "<stripped>"'),
-  )
+  return JSON.parse(output.replace(/"duration": "[^"]+"/g, '"duration": "<stripped>"'))
 }
 
 describe('generateCommands', () => {
@@ -42,12 +42,73 @@ describe('generateCommands', () => {
     const cmd = commands.get('listUsers')!
     expect(cmd.description).toBe('List users')
   })
+
+  test('supports swagger 2 body and response schemas', async () => {
+    const swagger2 = {
+      swagger: '2.0',
+      paths: {
+        '/users': {
+          post: {
+            operationId: 'createUser',
+            summary: 'Create a user',
+            parameters: [
+              {
+                in: 'body',
+                name: 'body',
+                required: true,
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                  },
+                  required: ['name'],
+                },
+              },
+            ],
+            responses: {
+              '200': {
+                description: 'Created',
+                schema: {
+                  type: 'object',
+                  properties: {
+                    created: { type: 'boolean' },
+                    name: { type: 'string' },
+                  },
+                  required: ['created', 'name'],
+                },
+              },
+            },
+          },
+        },
+      },
+    } as Openapi.OpenAPISpec
+
+    const fetch = async (req: Request) => {
+      const body = await req.json()
+      return Response.json({ created: true, name: body.name })
+    }
+
+    const commands = await Openapi.generateCommands(swagger2, fetch)
+    const cmd = commands.get('createUser')!
+
+    expect(cmd.body?.safeParse({ name: 'Bob' }).success).toBe(true)
+    expect(cmd.output?.safeParse({ created: true, name: 'Bob' }).success).toBe(true)
+
+    const result = await cmd.run({
+      options: { name: 'Bob' },
+      error: (error: unknown) => error,
+    })
+
+    expect(result).toEqual({ created: true, name: 'Bob' })
+  })
 })
 
 describe('cli integration', () => {
   function createCli() {
-    return Cli.create('test', { description: 'test' })
-      .command('api', { fetch: app.fetch, openapi: spec })
+    return Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+      openapi: spec,
+    })
   }
 
   test('GET /users via operationId', async () => {
@@ -57,7 +118,12 @@ describe('cli integration', () => {
 
   test('GET /users?limit=5 via options', async () => {
     const { output } = await serve(createCli(), [
-      'api', 'listUsers', '--limit', '5', '--format', 'json',
+      'api',
+      'listUsers',
+      '--limit',
+      '5',
+      '--format',
+      'json',
     ])
     expect(json(output).limit).toBe(5)
   })
@@ -125,7 +191,11 @@ describe('cli integration', () => {
 
   test('--verbose wraps in envelope', async () => {
     const { output } = await serve(createCli(), [
-      'api', 'healthCheck', '--verbose', '--format', 'json',
+      'api',
+      'healthCheck',
+      '--verbose',
+      '--format',
+      'json',
     ])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
@@ -164,8 +234,10 @@ describe('cli integration', () => {
 
 describe('@hono/zod-openapi integration', () => {
   function createCli() {
-    return Cli.create('test', { description: 'test' })
-      .command('api', { fetch: openapiApp.fetch, openapi: openapiSpec })
+    return Cli.create('test', { description: 'test' }).command('api', {
+      fetch: openapiApp.fetch,
+      openapi: openapiSpec,
+    })
   }
 
   test('GET /users via listUsers', async () => {
@@ -174,7 +246,14 @@ describe('@hono/zod-openapi integration', () => {
   })
 
   test('GET /users?limit=5', async () => {
-    const { output } = await serve(createCli(), ['api', 'listUsers', '--limit', '5', '--format', 'json'])
+    const { output } = await serve(createCli(), [
+      'api',
+      'listUsers',
+      '--limit',
+      '5',
+      '--format',
+      'json',
+    ])
     expect(json(output).limit).toBe(5)
   })
 
@@ -247,7 +326,11 @@ describe('@hono/zod-openapi integration', () => {
 
   test('--verbose wraps in envelope', async () => {
     const { output } = await serve(createCli(), [
-      'api', 'healthCheck', '--verbose', '--format', 'json',
+      'api',
+      'healthCheck',
+      '--verbose',
+      '--format',
+      'json',
     ])
     const parsed = json(output)
     expect(parsed.ok).toBe(true)
@@ -271,7 +354,15 @@ describe('@hono/zod-openapi integration', () => {
 
   test('PUT /users/:id with optional boolean body option', async () => {
     const { output } = await serve(createCli(), [
-      'api', 'updateUser', '1', '--name', 'Updated', '--active', 'true', '--format', 'json',
+      'api',
+      'updateUser',
+      '1',
+      '--name',
+      'Updated',
+      '--active',
+      'true',
+      '--format',
+      'json',
     ])
     const parsed = json(output)
     expect(parsed.id).toBe(1)
@@ -280,44 +371,63 @@ describe('@hono/zod-openapi integration', () => {
   })
 
   test('query param coercion with zod-openapi generated spec', async () => {
-    const { output } = await serve(createCli(), ['api', 'listUsers', '--limit', '3', '--format', 'json'])
+    const { output } = await serve(createCli(), [
+      'api',
+      'listUsers',
+      '--limit',
+      '3',
+      '--format',
+      'json',
+    ])
     expect(json(output).limit).toBe(3)
   })
 })
 
 describe('basePath', () => {
   test('fetch gateway prepends basePath to request path', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'users'])
     expect(output).toContain('Alice')
   })
 
   test('fetch gateway basePath with query params', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'users', '--limit', '5', '--format', 'json'])
     expect(json(output).limit).toBe(5)
   })
 
   test('fetch gateway basePath with POST', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'users', '-X', 'POST', '-d', '{"name":"Bob"}'])
     expect(output).toContain('Bob')
     expect(output).toContain('created')
   })
 
   test('openapi with basePath prepends to spec paths', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, openapi: spec, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      openapi: spec,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'listUsers'])
     expect(output).toContain('Alice')
   })
 
   test('openapi basePath with path params', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, openapi: spec, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      openapi: spec,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'getUser', '42'])
     expect(output).toMatchInlineSnapshot(`
       "id: 42
@@ -327,16 +437,22 @@ describe('basePath', () => {
   })
 
   test('openapi basePath with body options', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, openapi: spec, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      openapi: spec,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'createUser', '--name', 'Bob'])
     expect(output).toContain('created')
     expect(output).toContain('Bob')
   })
 
   test('openapi basePath with health check', async () => {
-    const cli = Cli.create('test', { description: 'test' })
-      .command('api', { fetch: prefixedApp.fetch, openapi: spec, basePath: '/api' })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: prefixedApp.fetch,
+      openapi: spec,
+      basePath: '/api',
+    })
     const { output } = await serve(cli, ['api', 'healthCheck', '--format', 'json'])
     expect(json(output)).toEqual({ ok: true })
   })
