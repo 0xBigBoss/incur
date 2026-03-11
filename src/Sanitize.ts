@@ -5,11 +5,7 @@ export type Result = {
   warnings?: string[] | undefined
 }
 
-const patterns = [
-  'ignore previous instructions',
-  'system prompt:',
-  'developer message:',
-] as const
+const patterns = ['ignore previous instructions', 'system prompt:', 'developer message:'] as const
 
 /** Scans output for obvious prompt injection strings. */
 export function scan(output: unknown): string[] {
@@ -32,7 +28,12 @@ export async function sanitize(
     | undefined,
 ): Promise<Result> {
   const builtinWarnings = context.agent ? scan(output) : []
-  if (!fn) return { output, blocked: false, ...(builtinWarnings.length ? { warnings: builtinWarnings } : undefined) }
+  if (!fn)
+    return {
+      output,
+      blocked: false,
+      ...(builtinWarnings.length ? { warnings: builtinWarnings } : undefined),
+    }
 
   const result = await fn(output, context)
   const warnings = [...new Set([...(builtinWarnings ?? []), ...(result.warnings ?? [])])]

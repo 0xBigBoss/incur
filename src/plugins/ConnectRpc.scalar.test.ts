@@ -32,11 +32,7 @@ type TestField = {
   localName: string
 }
 
-function scalarField(
-  localName: string,
-  scalar: ScalarType,
-  extra: Record<string, unknown> = {},
-) {
+function scalarField(localName: string, scalar: ScalarType, extra: Record<string, unknown> = {}) {
   return {
     fieldKind: 'scalar',
     localName,
@@ -83,10 +79,7 @@ function mapScalarField(localName: string, scalar: ScalarType) {
   } as const
 }
 
-function message(
-  typeName: string,
-  fields: TestField[],
-) {
+function message(typeName: string, fields: TestField[]) {
   return {
     field: Object.fromEntries(fields.map((field) => [field.localName, field])),
     fields,
@@ -181,12 +174,8 @@ describe('connectRpc scalar handling', () => {
       }),
       scalarField('name', ScalarType.STRING),
     ])
-    const input = message('acme.scalar.v1.UploadBlobRequest', [
-      messageField('profile', profile),
-    ])
-    const output = message('acme.scalar.v1.UploadBlobResponse', [
-      messageField('profile', profile),
-    ])
+    const input = message('acme.scalar.v1.UploadBlobRequest', [messageField('profile', profile)])
+    const output = message('acme.scalar.v1.UploadBlobResponse', [messageField('profile', profile)])
     const service = {
       methods: [
         {

@@ -326,7 +326,10 @@ function globalOptionsLines(root = false): string[] {
   }
 
   const flags = [
-    { flag: '--filter-output <keys>', desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])' },
+    {
+      flag: '--filter-output <keys>',
+      desc: 'Filter output by key paths (e.g. foo,bar.baz,a[0,3])',
+    },
     { flag: '--format <toon|json|yaml|md|jsonl>', desc: 'Output format' },
     { flag: '--help', desc: 'Show help' },
     { flag: '--llms, --llms-full', desc: 'Print LLM-readable manifest' },

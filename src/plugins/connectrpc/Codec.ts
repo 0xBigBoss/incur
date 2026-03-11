@@ -1,6 +1,6 @@
-import { Code, ConnectError } from '@connectrpc/connect'
 import type { DescEnum, DescField, DescMessage } from '@bufbuild/protobuf'
 import { ScalarType } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 
 import { enumLiteral, enumName, toSnake } from './Metadata.js'
 

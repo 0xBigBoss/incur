@@ -1,6 +1,6 @@
+import { parse } from 'graphql'
 import { readFile } from 'node:fs/promises'
 
-import { parse } from 'graphql'
 import { IncurError } from '../../Errors.js'
 
 /**
@@ -49,7 +49,9 @@ export function parseVariables(value: string | undefined) {
  */
 export function isMutation(document: string, operationName: string | undefined) {
   const parsed = parse(document)
-  const operations = parsed.definitions.filter((definition) => definition.kind === 'OperationDefinition')
+  const operations = parsed.definitions.filter(
+    (definition) => definition.kind === 'OperationDefinition',
+  )
   if (operations.length === 0) return false
   const selected =
     operationName === undefined

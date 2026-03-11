@@ -3730,8 +3730,8 @@ test('commands with body schema accept --json payload', async () => {
     'json',
   ])
 
-expect(seen).toEqual({ region: 'us-central1', replicas: 3 })
-expect(JSON.parse(output)).toEqual({ region: 'us-central1', replicas: 3 })
+  expect(seen).toEqual({ region: 'us-central1', replicas: 3 })
+  expect(JSON.parse(output)).toEqual({ region: 'us-central1', replicas: 3 })
 })
 
 test('commands with input schema merge --json payloads with positional args', async () => {
@@ -4209,7 +4209,9 @@ test('generated commands support scoped --llms and schema introspection', async 
     })
 
     const llmsFull = await serve(cli, ['users', '--llms-full', '--format', 'json'])
-    expect(json(llmsFull.output).commands.find((c: any) => c.name === 'users delete-user')).toMatchObject({
+    expect(
+      json(llmsFull.output).commands.find((c: any) => c.name === 'users delete-user'),
+    ).toMatchObject({
       destructive: true,
       mutates: true,
       schema: {

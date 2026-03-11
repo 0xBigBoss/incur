@@ -132,7 +132,12 @@ test('writes CONTEXT.md with rules and command names', async () => {
 
   const cli = Cli.create('my-tool', { description: 'A useful tool' })
   cli.command('run', { description: 'Run something', run: () => ({}) })
-  cli.command('destroy', { description: 'Destroy something', mutates: true, destructive: true, run: () => ({}) })
+  cli.command('destroy', {
+    description: 'Destroy something',
+    mutates: true,
+    destructive: true,
+    run: () => ({}),
+  })
 
   const commands = Cli.toCommands.get(cli)!
   const installDir = join(tmp, 'install')
@@ -191,7 +196,8 @@ test('global sync writes CONTEXT.md to the canonical agent directory instead of 
   } finally {
     if (savedHome === undefined) delete process.env.HOME
     else process.env.HOME = savedHome
-    process.argv[1] = savedArgv1
+    if (savedArgv1 === undefined) process.argv.splice(1, 1)
+    else process.argv[1] = savedArgv1
     vi.resetModules()
     rmSync(tmp, { recursive: true, force: true })
   }

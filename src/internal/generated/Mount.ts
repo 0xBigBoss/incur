@@ -1,6 +1,5 @@
-import type { Handler as MiddlewareHandler } from '../../middleware.js'
-
 import type { CommandDefinition, CommandEntry, InternalGroup, OutputPolicy } from '../../Cli.js'
+import type { Handler as MiddlewareHandler } from '../../middleware.js'
 import type { Operation } from './Operation.js'
 
 /**

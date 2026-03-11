@@ -1,7 +1,7 @@
-import { IncurError } from '../Errors.js'
 import { z } from 'zod'
 
 import * as Cli from '../Cli.js'
+import { IncurError } from '../Errors.js'
 import { mountOperations } from '../internal/generated/Mount.js'
 import type { Operation } from '../internal/generated/Operation.js'
 import type { Plugin } from '../Plugin.js'
@@ -74,9 +74,11 @@ export type Options = {
   /**
    * Selection synthesis settings.
    */
-  selection?: {
-    depth?: number | undefined
-  } | undefined
+  selection?:
+    | {
+        depth?: number | undefined
+      }
+    | undefined
   /**
    * GraphQL transport configuration.
    */
@@ -157,7 +159,11 @@ function createGeneratedOperation(options: {
   selectionDepth?: number | undefined
   transport: z.output<typeof optionsSchema>['transport']
 }): Operation<any, any, any> {
-  const args = createArgsSchema(options.operation.field.args, options.operation.positionals, options.scalars)
+  const args = createArgsSchema(
+    options.operation.field.args,
+    options.operation.positionals,
+    options.scalars,
+  )
   const input = createInputSchema(options.operation.field.args, options.scalars)
   const commandOptions = createOptionsSchema(
     options.operation.field.args,
@@ -213,7 +219,9 @@ function createGeneratedOperation(options: {
   }
 }
 
-function createRawOperation(transport: z.output<typeof optionsSchema>['transport']): Operation<any, any, any> {
+function createRawOperation(
+  transport: z.output<typeof optionsSchema>['transport'],
+): Operation<any, any, any> {
   const optionsSchema = z.object({
     file: z.string().optional(),
     operationName: z.string().optional(),

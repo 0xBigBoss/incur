@@ -32,7 +32,11 @@ export function createSelection(type: GraphQLOutputType, options: Options = {}) 
   }
 }
 
-function visit(type: GraphQLOutputType, depth: number, scalars: ScalarMap): {
+function visit(
+  type: GraphQLOutputType,
+  depth: number,
+  scalars: ScalarMap,
+): {
   schema: z.ZodType
   selection?: string | undefined
 } {
@@ -52,7 +56,9 @@ function visit(type: GraphQLOutputType, depth: number, scalars: ScalarMap): {
     }
   if (isEnumType(named))
     return {
-      schema: z.enum(named.getValues().map((value) => value.name) as [string, ...string[]]).nullable(),
+      schema: z
+        .enum(named.getValues().map((value) => value.name) as [string, ...string[]])
+        .nullable(),
     }
   if (isInterfaceType(named) || isUnionType(named))
     return {

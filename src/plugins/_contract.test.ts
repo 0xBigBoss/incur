@@ -69,7 +69,12 @@ function contract(testContract: Contract) {
     test('mounted commands expose schema details', async () => {
       const subject = await testContract.create()
       try {
-        const result = await serve(subject.cli, ['schema', ...testContract.schemaPath, '--format', 'json'])
+        const result = await serve(subject.cli, [
+          'schema',
+          ...testContract.schemaPath,
+          '--format',
+          'json',
+        ])
         testContract.assertSchema(JSON.parse(result.output))
       } finally {
         await subject.close?.()
@@ -92,7 +97,9 @@ function contract(testContract: Contract) {
     test('mounted commands project to MCP tool names', async () => {
       const subject = await testContract.create()
       try {
-        const names = Mcp.collectTools(await resolveCommands(subject.cli), []).map((tool) => tool.name)
+        const names = Mcp.collectTools(await resolveCommands(subject.cli), []).map(
+          (tool) => tool.name,
+        )
         expect(names).toEqual(expect.arrayContaining(testContract.expectedMcpTools))
       } finally {
         await subject.close?.()
@@ -213,8 +220,18 @@ contract({
       close: server.close,
     }
   },
-  expectedCommands: ['users delete-user', 'users get-user', 'users list-users', 'users watch-users'],
-  expectedMcpTools: ['users_delete_user', 'users_get_user', 'users_list_users', 'users_watch_users'],
+  expectedCommands: [
+    'users delete-user',
+    'users get-user',
+    'users list-users',
+    'users watch-users',
+  ],
+  expectedMcpTools: [
+    'users_delete_user',
+    'users_get_user',
+    'users_list_users',
+    'users_watch_users',
+  ],
   fullCommandName: 'users delete-user',
   name: 'shared generated plugin contract',
   schemaPath: ['users', 'list-users'],

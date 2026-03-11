@@ -109,18 +109,19 @@ describe('connectRpc', () => {
       )
 
       const manifest = await serve(cli, ['users', '--llms-full', '--format', 'json'])
-      expect(JSON.parse(manifest.output).commands.find((c: any) => c.name === 'users delete-user'))
-        .toMatchObject({
-          destructive: true,
-          mutates: true,
-          schema: {
-            options: {
-              properties: {
-                dryRun: { default: false, type: 'boolean' },
-              },
+      expect(
+        JSON.parse(manifest.output).commands.find((c: any) => c.name === 'users delete-user'),
+      ).toMatchObject({
+        destructive: true,
+        mutates: true,
+        schema: {
+          options: {
+            properties: {
+              dryRun: { default: false, type: 'boolean' },
             },
           },
-        })
+        },
+      })
     } finally {
       await server.close()
     }

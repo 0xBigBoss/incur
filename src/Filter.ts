@@ -104,7 +104,12 @@ function resolve(data: unknown, segments: Segment[], index: number): unknown {
   return sliced.map((item) => resolve(item, segments, index + 1))
 }
 
-function merge(target: Record<string, unknown>, data: unknown, segments: Segment[], index: number): void {
+function merge(
+  target: Record<string, unknown>,
+  data: unknown,
+  segments: Segment[],
+  index: number,
+): void {
   if (index >= segments.length || typeof data !== 'object' || data === null) return
   const segment = segments[index]!
 
@@ -149,8 +154,7 @@ function merge(target: Record<string, unknown>, data: unknown, segments: Segment
     }
 
     if (typeof val !== 'object' || val === null) return
-    if (!target[segment.key] || typeof target[segment.key] !== 'object')
-      target[segment.key] = {}
+    if (!target[segment.key] || typeof target[segment.key] !== 'object') target[segment.key] = {}
     merge(target[segment.key] as Record<string, unknown>, val, segments, index + 1)
     return
   }
@@ -197,9 +201,7 @@ function walkSchema(
 
 function formatPath(path: FilterPath): string {
   return path
-    .map((segment) =>
-      'key' in segment ? segment.key : `[${segment.start},${segment.end}]`,
-    )
+    .map((segment) => ('key' in segment ? segment.key : `[${segment.start},${segment.end}]`))
     .join('.')
     .replace('.[', '[')
 }

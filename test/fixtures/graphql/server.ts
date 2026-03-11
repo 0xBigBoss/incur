@@ -64,7 +64,12 @@ function makeUser(
     manager:
       depth >= 2
         ? null
-        : makeUser(`${userId}-mgr-${depth + 1}`, status, `${userId}-mgr-${depth + 1}@acme.dev`, depth + 1),
+        : makeUser(
+            `${userId}-mgr-${depth + 1}`,
+            status,
+            `${userId}-mgr-${depth + 1}@acme.dev`,
+            depth + 1,
+          ),
     status,
   }
 }
@@ -82,16 +87,24 @@ const rootValue = {
     return makeUser(userId)
   },
   listUsers({ limit, status }: { limit?: number | undefined; status?: string | undefined }) {
-    const items = ['u-1', 'u-2', 'u-3'].slice(0, limit ?? 2).map((userId) =>
-      makeUser(userId, status ?? 'ACTIVE'),
-    )
+    const items = ['u-1', 'u-2', 'u-3']
+      .slice(0, limit ?? 2)
+      .map((userId) => makeUser(userId, status ?? 'ACTIVE'))
     return {
       items,
       nextCursor: `cursor-${limit ?? 2}`,
     }
   },
-  updateUser({ input }: { input: { email?: string | undefined; status?: string | undefined; userId: string } }) {
-    return makeUser(input.userId, input.status ?? 'ACTIVE', input.email ?? `${input.userId}@acme.dev`)
+  updateUser({
+    input,
+  }: {
+    input: { email?: string | undefined; status?: string | undefined; userId: string }
+  }) {
+    return makeUser(
+      input.userId,
+      input.status ?? 'ACTIVE',
+      input.email ?? `${input.userId}@acme.dev`,
+    )
   },
 }
 

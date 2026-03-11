@@ -239,7 +239,7 @@ export function create(
                       ? `Failed to resolve plugin '${mount}': ${error instanceof Error ? error.message : String(error)}`
                       : options.kind === 'command'
                         ? `Failed to mount command group '${mount}': ${error instanceof Error ? error.message : String(error)}`
-                      : `Failed to generate command group '${mount}': ${error instanceof Error ? error.message : String(error)}`,
+                        : `Failed to generate command group '${mount}': ${error instanceof Error ? error.message : String(error)}`,
                 })
           throw base
         }),
@@ -1960,7 +1960,16 @@ async function fetchImpl(
     )
 
   const { command, path, rest } = resolved
-  return executeCommand(path, command, rest, inputOptions, inputArgv, start, options, resolved.middlewares)
+  return executeCommand(
+    path,
+    command,
+    rest,
+    inputOptions,
+    inputArgv,
+    start,
+    options,
+    resolved.middlewares,
+  )
 }
 
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
@@ -2628,7 +2637,22 @@ function extractBuiltinFlags(argv: string[]) {
     else rest.push(token)
   }
 
-  return { verbose, format, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp, help, version, schema, rest }
+  return {
+    verbose,
+    format,
+    formatExplicit,
+    filterOutput,
+    tokenLimit,
+    tokenOffset,
+    tokenCount,
+    llms,
+    llmsFull,
+    mcp,
+    help,
+    version,
+    schema,
+    rest,
+  }
 }
 
 /** @internal Returns a command's effective option schema, including injected framework flags. */

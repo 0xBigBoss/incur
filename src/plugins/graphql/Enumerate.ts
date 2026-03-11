@@ -22,7 +22,12 @@ export function enumerateOperations(
   options: {
     exclude?: string[] | undefined
     include?: string[] | undefined
-    mutations?: Record<string, { destructive?: boolean | undefined; mutates?: boolean | undefined } | undefined> | undefined
+    mutations?:
+      | Record<
+          string,
+          { destructive?: boolean | undefined; mutates?: boolean | undefined } | undefined
+        >
+      | undefined
     positionals?: Record<string, string[] | undefined> | undefined
     rename?: Record<string, string | undefined> | undefined
   },
@@ -42,8 +47,7 @@ export function enumerateOperations(
       if (exclude.has(field.name)) continue
 
       const commandName = options.rename?.[field.name] ?? toKebab(field.name)
-      if (seen.has(commandName))
-        throw new Error(`Duplicate GraphQL command name '${commandName}'`)
+      if (seen.has(commandName)) throw new Error(`Duplicate GraphQL command name '${commandName}'`)
       seen.add(commandName)
 
       const mutation = options.mutations?.[field.name]

@@ -71,7 +71,8 @@ function toInputFieldSchema(
 function toInputSchema(type: GraphQLInputType, scalars: ScalarMap): z.ZodType {
   if (isNonNullType(type)) return toInputSchema(type.ofType, scalars)
   if (isListType(type)) return z.array(toInputSchema(type.ofType, scalars))
-  if (isEnumType(type)) return z.enum(type.getValues().map((value) => value.name) as [string, ...string[]])
+  if (isEnumType(type))
+    return z.enum(type.getValues().map((value) => value.name) as [string, ...string[]])
   if (isInputObjectType(type)) {
     const shape: Record<string, z.ZodType> = {}
     for (const field of Object.values(type.getFields()))

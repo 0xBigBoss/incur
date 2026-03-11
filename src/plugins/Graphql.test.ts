@@ -1,12 +1,11 @@
+import { buildSchema, graphql, introspectionFromSchema } from 'graphql'
+import { Cli, Plugins } from 'incur'
 import { mkdtemp, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
-
-import { Cli, Plugins } from 'incur'
-import { buildSchema, graphql, introspectionFromSchema } from 'graphql'
 
 import { introspection, startTestServer } from '../../test/fixtures/graphql/server.js'
 import { createSelection } from './graphql/Selection.js'
@@ -98,7 +97,9 @@ describe('graphql', () => {
 
       const manifest = await serve(cli, ['graphql', '--llms-full', '--format', 'json'])
       expect(
-        JSON.parse(manifest.output).commands.find((command: any) => command.name === 'graphql update-user'),
+        JSON.parse(manifest.output).commands.find(
+          (command: any) => command.name === 'graphql update-user',
+        ),
       ).toMatchObject({
         mutates: true,
       })
@@ -120,7 +121,14 @@ describe('graphql', () => {
         }),
       )
 
-      const result = await serve(cli, ['graphql', 'get-user', '--userId', 'u-1', '--format', 'json'])
+      const result = await serve(cli, [
+        'graphql',
+        'get-user',
+        '--userId',
+        'u-1',
+        '--format',
+        'json',
+      ])
       expect(JSON.parse(result.output)).toEqual({
         email: 'u-1@acme.dev',
         id: 'u-1',
@@ -185,13 +193,7 @@ describe('graphql', () => {
       const result = await graphql({
         operationName: payload.operationName,
         rootValue: {
-          issueUpdate({
-            id,
-            input,
-          }: {
-            id: string
-            input: { email?: string | undefined }
-          }) {
+          issueUpdate({ id, input }: { id: string; input: { email?: string | undefined } }) {
             return {
               email: input.email ?? `${id}@acme.dev`,
               id,
@@ -436,7 +438,9 @@ describe('graphql', () => {
       }
     `)
 
-    const selection = createSelection(schema.getQueryType()!.getFields().wrapper!.type, { depth: 1 })
+    const selection = createSelection(schema.getQueryType()!.getFields().wrapper!.type, {
+      depth: 1,
+    })
 
     expect(selection.selection).toContain('__typename')
     expect(selection.selection?.length).toBeGreaterThan(0)

@@ -1,6 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-
 import { z } from 'zod'
 
 const controlCharPattern = /[\u0000-\u001f\u007f]/

@@ -20,8 +20,7 @@ export function getInjectedOptionsSchema(command: CommandOptionsSource) {
   const shape: Record<string, z.ZodType> = {}
 
   if (command.mutates)
-    shape.dryRun = z
-      .coerce
+    shape.dryRun = z.coerce
       .boolean()
       .default(false)
       .describe('Validate inputs and print the resolved command context without executing')

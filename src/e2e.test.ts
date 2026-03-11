@@ -1,8 +1,7 @@
+import { Cli, Errors, Plugins, Skill, Typegen, z } from 'incur'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
-import { Cli, Errors, Plugins, Skill, Typegen, z } from 'incur'
 
 import { startTestServer } from '../test/fixtures/connectrpc/server.js'
 import { UserService } from '../test/fixtures/connectrpc/user_pb.js'
@@ -1265,7 +1264,13 @@ describe('--llms-full', () => {
   })
 
   test('scoped --llms-full to nested group', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'project',
+      'deploy',
+      '--llms-full',
+      '--format',
+      'json',
+    ])
     const names = json(output).commands.map((c: any) => c.name)
     expect(names).toMatchInlineSnapshot(`
       [
@@ -1296,7 +1301,13 @@ describe('--llms-full', () => {
   })
 
   test('--llms-full json includes examples on commands', async () => {
-    const { output } = await serve(createApp(), ['project', 'deploy', '--llms-full', '--format', 'json'])
+    const { output } = await serve(createApp(), [
+      'project',
+      'deploy',
+      '--llms-full',
+      '--format',
+      'json',
+    ])
     const deployCreate = json(output).commands.find((c: any) => c.name === 'project deploy create')
     expect(deployCreate.examples).toMatchInlineSnapshot(`
       [
@@ -2670,13 +2681,7 @@ describe('fetch api', () => {
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ path: '/api/proxy/users' })
-    expect(order).toEqual([
-      'root:before',
-      'group:before',
-      'gateway',
-      'group:after',
-      'root:after',
-    ])
+    expect(order).toEqual(['root:before', 'group:before', 'gateway', 'group:after', 'root:after'])
   })
 
   test('fetch composes root, group, and command middleware', async () => {
@@ -2708,7 +2713,8 @@ describe('fetch api', () => {
       })
       .command(admin)
 
-    expect(await fetchJson(cli, new Request('http://localhost/admin/reset'))).toMatchInlineSnapshot(`
+    expect(await fetchJson(cli, new Request('http://localhost/admin/reset')))
+      .toMatchInlineSnapshot(`
       {
         "body": {
           "data": {

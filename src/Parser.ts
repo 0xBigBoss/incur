@@ -254,7 +254,8 @@ function validateParsedStrings(
     return validateParsedStrings(def.innerType as z.ZodType, value, path)
 
   if (type === 'string') {
-    if (typeof value !== 'string' || allowsControlChars(schema) || !hasControlChars(value)) return []
+    if (typeof value !== 'string' || allowsControlChars(schema) || !hasControlChars(value))
+      return []
     return [
       {
         path: path.join('.'),
@@ -296,7 +297,9 @@ function validateParsedStrings(
   if (type === 'tuple') {
     if (!Array.isArray(value)) return []
     const items = (def.items as z.ZodType[]) ?? []
-    return items.flatMap((item, index) => validateParsedStrings(item, value[index], [...path, String(index)]))
+    return items.flatMap((item, index) =>
+      validateParsedStrings(item, value[index], [...path, String(index)]),
+    )
   }
 
   if (type === 'intersection') {
