@@ -31,13 +31,17 @@
   },
   "packageManager": "pnpm@10.30.2",
   "[!start-pkg]": "",
-  "name": "incur",
+  "name": "@0xbigboss/incur",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wevm/incur"
+    "url": "https://github.com/0xBigBoss/incur"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
   },
   "files": [
     "examples",
