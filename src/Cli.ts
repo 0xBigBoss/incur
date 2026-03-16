@@ -1251,7 +1251,7 @@ async function serveImpl(
   }
 
   if (result.ok) {
-    const cta = formatCtaBlock(name, result.cta)
+    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
     write({
       ok: true,
       data: result.data,
@@ -1262,7 +1262,7 @@ async function serveImpl(
       },
     })
   } else {
-    const cta = formatCtaBlock(name, result.cta)
+    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
 
     if (human && !formatExplicit && result.error.fieldErrors) {
       writeln(
