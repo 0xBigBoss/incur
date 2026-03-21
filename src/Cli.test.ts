@@ -2284,7 +2284,7 @@ describe('env', () => {
           --verbose                           Show full output envelope
 
         Environment Variables:
-          API_TOKEN  Auth token (set: ••••ret)
+          API_TOKEN  Auth token (set: ****cret)
           API_URL    API URL (default: https://api.example.com)
         "
       `)
@@ -2293,7 +2293,7 @@ describe('env', () => {
       process.env.API_URL = 'https://custom.example.com'
       const { output: output2 } = await serve(cli, ['deploy', '--help'])
       expect(output2).toContain(
-        'API_URL    API URL (set: ••••com, default: https://api.example.com)',
+        'API_URL    API URL (set: ****.com, default: https://api.example.com)',
       )
     } finally {
       delete process.env.API_TOKEN
@@ -2321,7 +2321,7 @@ describe('env', () => {
     const { output: output2 } = await serve(cli, ['deploy', '--help'], {
       env: { API_TOKEN: 'secret' },
     })
-    expect(output2).toContain('set: ••••ret')
+    expect(output2).toContain('set: ****cret')
   })
 
   test('--llms json includes schema.env', async () => {
