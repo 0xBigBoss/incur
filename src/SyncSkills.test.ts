@@ -34,8 +34,8 @@ test('generates skill files and installs to canonical location', async () => {
   })
 
   expect(result.skills.length).toBeGreaterThan(0)
-  expect(result.skills.map((s) => s.name)).toContain('greet')
-  expect(result.skills.map((s) => s.name)).toContain('ping')
+  expect(result.skills.map((s) => s.name)).toContain('test-greet')
+  expect(result.skills.map((s) => s.name)).toContain('test-ping')
 
   // Verify skills were installed to canonical location
   for (const p of result.paths) {

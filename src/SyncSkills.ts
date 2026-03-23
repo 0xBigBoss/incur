@@ -30,8 +30,9 @@ export async function sync(
         : path.join(tmpDir, 'SKILL.md')
       await fs.mkdir(path.dirname(filePath), { recursive: true })
       await fs.writeFile(filePath, `${file.content}\n`)
+      const nameMatch = file.content.match(/^name:\s*(.+)$/m)
       const descMatch = file.content.match(/^description:\s*(.+)$/m)
-      skills.push({ name: file.dir || name, description: descMatch?.[1] })
+      skills.push({ name: nameMatch?.[1] ?? (file.dir || name), description: descMatch?.[1] })
     }
 
     // Include additional SKILL.md files matched by glob patterns

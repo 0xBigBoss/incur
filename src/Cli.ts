@@ -698,8 +698,7 @@ async function serveImpl(
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
-      const skillLabel = (s: (typeof result.skills)[number]) =>
-        s.external || s.name === name ? s.name : `${name}-${s.name}`
+      const skillLabel = (s: (typeof result.skills)[number]) => s.name
       const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
       for (const s of result.skills) {
         const label = skillLabel(s)
