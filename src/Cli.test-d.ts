@@ -290,6 +290,15 @@ test('run() context exposes format metadata', () => {
   })
 })
 
+test('root run() context exposes displayName', () => {
+  Cli.create('test', {
+    run(c) {
+      expectTypeOf(c.displayName).toEqualTypeOf<string>()
+      return { pong: true }
+    },
+  })
+})
+
 test('create() accepts config-file defaults options', () => {
   Cli.create('test', {
     config: {},

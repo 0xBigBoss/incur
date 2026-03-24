@@ -377,6 +377,8 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
+          /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+          displayName: string
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */

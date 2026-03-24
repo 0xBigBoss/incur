@@ -4421,6 +4421,17 @@ describe('displayName', () => {
     expect(middlewareDisplayName).toBe('mc')
   })
 
+  test('available in root run context', async () => {
+    process.argv[1] = '/usr/local/bin/mc'
+    const cli = Cli.create({
+      name: 'my-cli',
+      aliases: ['mc'],
+      run: (c) => c.ok({ displayName: c.displayName }),
+    })
+    const { output } = await serve(cli, ['--json'])
+    expect(JSON.parse(output).displayName).toBe('mc')
+  })
+
   test('cta commands use displayName', async () => {
     process.argv[1] = '/usr/local/bin/mc'
     const cli = Cli.create({
