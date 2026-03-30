@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
 import type { z } from 'zod'
 
+import { getEffectiveOptionsSchema as getCommandOptionsSchema } from './CommandOptions.js'
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
 import { IncurError, ParseError, ValidationError } from './Errors.js'
@@ -13,12 +14,15 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
 import * as Command from './internal/command.js'
+import * as GeneratedMount from './internal/generated/Mount.js'
 import { isRecord, suggest } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
+import type { Plugin } from './Plugin.js'
+import * as Sanitize from './Sanitize.js'
 export type { MiddlewareHandler }
 import * as Parser from './Parser.js'
 import type { Register } from './Register.js'
@@ -88,6 +92,11 @@ export type Cli<
   fetch(req: Request): Promise<Response>
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
+  /** Mounts a generated plugin as a command group with async loading. */
+  plugin<const name extends string>(
+    name: name,
+    plugin: Plugin,
+  ): Cli<commands, vars, env>
   /** Registers middleware that runs around every command. */
   use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
@@ -287,10 +296,34 @@ export function create(
         outputPolicy: def.outputPolicy,
         rootCommand: rootDef,
         rootFetch,
+        sanitize: def.sanitize,
         sync: def.sync,
         vars: def.vars,
         version: def.version,
       })
+    },
+
+    plugin(pluginName: string, plugin: Plugin): any {
+      pending.push(
+        (async () => {
+          const config = plugin.config ? plugin.config.parse(plugin.options ?? {}) : undefined
+          const resolved = await plugin.resolve({
+            cwd: process.cwd(),
+            config,
+            mount: pluginName,
+          } as any)
+          const sub = resolved as Cli
+          const subCommands = toCommands.get(sub)!
+          const subMiddlewares = toMiddlewares.get(sub)
+          commands.set(pluginName, {
+            _group: true,
+            description: plugin.description ?? sub.description,
+            commands: subCommands,
+            ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
+          })
+        })(),
+      )
+      return cli
     },
 
     use(handler: MiddlewareHandler): any {
@@ -414,9 +447,22 @@ export declare namespace create {
           command?: string | undefined
         }
       | undefined
+    /** Sanitizes output before it is returned to agents. */
+    sanitize?:
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
+          /** Rules to include in generated context file. */
+          contextRules?: string[] | undefined
           /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -500,6 +546,7 @@ async function serveImpl(
       env: options.envSchema,
       vars: options.vars,
       version: options.version,
+      sanitize: options.sanitize,
     })
     return
   }
@@ -701,6 +748,7 @@ async function serveImpl(
     try {
       stdout('Syncing...')
       const result = await SyncSkills.sync(name, commands, {
+        contextRules: options.sync?.contextRules,
         cwd: options.sync?.cwd,
         depth,
         description: options.description,
@@ -1952,8 +2000,20 @@ declare namespace serveImpl {
     rootCommand?: CommandDefinition<any, any, any> | undefined
     /** Root fetch handler, invoked when no subcommand matches and no rootCommand is set. */
     rootFetch?: FetchHandler | undefined
+    /** Sanitize callback for agent output. */
+    sanitize?:
+      | ((
+          output: unknown,
+          context: { command: string; agent: boolean },
+        ) => Promise<{
+          output: unknown
+          blocked: boolean
+          warnings?: string[] | undefined
+        }>)
+      | undefined
     sync?:
       | {
+          contextRules?: string[] | undefined
           cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined
@@ -2021,7 +2081,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     } else if (noCfgFlag && token === noCfgFlag) {
       configPath = undefined
       configDisabled = true
-    } else if (token === '--filter-output' && argv[i + 1]) {
+    } else if ((token === '--filter-output' || token === '--fields') && argv[i + 1]) {
       filterOutput = argv[i + 1]!
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
@@ -2967,6 +3027,8 @@ function emitDeprecationWarnings(
     }
   }
 }
+
+export { getCommandOptionsSchema }
 
 /** @internal Resolves the display name from `process.argv[1]` basename. Returns the basename if it matches `name` or one of the `aliases`, otherwise falls back to `name`. */
 function resolveDisplayName(name: string, aliases?: string[]): string {
