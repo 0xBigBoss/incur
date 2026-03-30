@@ -396,6 +396,23 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   return value
 }
 
+/**
+ * Coerces a single query-param string value using CLI-style rules:
+ * - `"true"` / `"false"` → boolean
+ * - numeric strings → number
+ * - everything else → string as-is
+ *
+ * This mirrors how CLI argv coerces option values so GET requests behave
+ * consistently with CLI invocations without requiring `z.coerce.*` in schemas.
+ */
+export function coerceQueryParam(value: string): unknown {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  const n = Number(value)
+  if (value !== '' && !Number.isNaN(n)) return n
+  return value
+}
+
 /** Returns the best available env source for the current runtime. */
 function defaultEnvSource(): Record<string, string | undefined> {
   if (typeof globalThis !== 'undefined') {

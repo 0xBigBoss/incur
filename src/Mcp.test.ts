@@ -467,7 +467,7 @@ describe('Mcp', () => {
 
     const [, res] = await mcpSession(commands, [
       { id: 1, method: 'initialize', params: initParams },
-      { id: 2, method: 'tools/call', params: { name: 'check-env', arguments: {} } },
+      { id: 2, method: 'tools/call', params: { name: 'check_env', arguments: {} } },
     ])
     const data = JSON.parse(res.result.content[0].text)
     expect(data.val).toBe('default-val')

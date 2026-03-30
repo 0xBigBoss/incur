@@ -78,7 +78,7 @@ export declare namespace serve {
 }
 
 /** Sanitize callback signature used by both `serve` and `callTool`. */
-type SanitizeCallback = (
+export type SanitizeCallback = (
   output: unknown,
   context: { command: string; agent: boolean },
 ) => Promise<{

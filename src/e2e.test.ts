@@ -2944,7 +2944,7 @@ describe('fetch api', () => {
           "config",
           "echo",
           "explode",
-          "explode-clac",
+          "explode_clac",
           "noop",
           "ping",
           "project_create",
@@ -2956,11 +2956,11 @@ describe('fetch api', () => {
           "project_list",
           "slow",
           "stream",
-          "stream-error",
-          "stream-ok",
-          "stream-text",
-          "stream-throw",
-          "validate-fail",
+          "stream_error",
+          "stream_ok",
+          "stream_text",
+          "stream_throw",
+          "validate_fail",
         ]
       `)
     })
