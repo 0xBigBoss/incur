@@ -202,7 +202,7 @@ function createGeneratedOperation(options: {
     name: options.operation.commandName,
     ...(commandOptions ? { options: commandOptions } : undefined),
     output: selection.schema,
-    run: async (context) => {
+    run: async (context: any) => {
       try {
         const variables = input.parse({ ...context.options, ...context.args })
         const data = await execute({
@@ -241,7 +241,7 @@ function createRawOperation(
     name: 'raw',
     options: optionsSchema,
     output: z.record(z.string(), z.unknown()),
-    run: async (context) => {
+    run: async (context: any) => {
       try {
         const parsed = optionsSchema.parse(context.options)
         const document = await resolveDocument({

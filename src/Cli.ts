@@ -14,7 +14,6 @@ import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
 import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
 import * as Command from './internal/command.js'
-import * as GeneratedMount from './internal/generated/Mount.js'
 import { isRecord, suggest } from './internal/helpers.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
@@ -337,7 +336,7 @@ export function create(
         (async () => {
           let sub: Cli
           try {
-            const config = plugin.config ? plugin.config.parse(plugin.options ?? {}) : undefined
+            const config = plugin.config ? (plugin.config as z.ZodObject<any>).parse(plugin.options ?? {}) : undefined
             const resolved = await plugin.resolve({
               cwd: process.cwd(),
               config,
@@ -1633,6 +1632,7 @@ declare namespace fetchImpl {
             middlewares?: MiddlewareHandler[] | undefined
             env?: z.ZodObject<any> | undefined
             vars?: z.ZodObject<any> | undefined
+            sanitize?: Mcp.SanitizeCallback | undefined
           },
         ) => Promise<Response>)
       | undefined
@@ -2527,7 +2527,7 @@ export type CommandsMap = Record<
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
+export type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
 
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all'
@@ -2536,7 +2536,7 @@ export type OutputPolicy = 'agent-only' | 'all'
 type FetchHandler = (req: Request) => Response | Promise<Response>
 
 /** @internal A command group's internal storage. */
-type InternalGroup = {
+export type InternalGroup = {
   _group: true
   description?: string | undefined
   middlewares?: MiddlewareHandler[] | undefined
@@ -3134,11 +3134,13 @@ declare namespace Output {
     duration: string
     /** Offset to pass as `--token-offset` to fetch the next page of truncated output. */
     nextOffset?: number | undefined
+    /** Warnings from sanitization or validation. */
+    warnings?: string[] | undefined
   }
 }
 
 /** @internal Defines a command's schema, handler, and metadata. */
-type CommandDefinition<
+export type CommandDefinition<
   args extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
   options extends z.ZodObject<any> | undefined = undefined,
