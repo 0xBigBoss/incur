@@ -451,6 +451,61 @@ test('skills add --no-global persists includeCwd so staleness check walks the sa
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync writes CONTEXT.md to a per-CLI path, not the shared root file', async () => {
+  // Issue 3 regression: `resolveContextPath` used to return the shared
+  // `~/.agents/CONTEXT.md` (global mode) or `$cwd/CONTEXT.md` (local
+  // mode). In local mode it clobbered any user-authored repo-root
+  // CONTEXT.md; in global mode each CLI's sync wiped the previous CLI's
+  // context. The fix scopes the file to a per-CLI location under the
+  // `.agents/contexts/` subdirectory and leaves the legacy shared path
+  // untouched.
+  const tmp = join(tmpdir(), `clac-context-path-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('ctxtool-alpha', { description: 'Alpha' })
+  cli.command('ping', { description: 'ping', run: () => ({}) })
+  const cli2 = Cli.create('ctxtool-beta', { description: 'Beta' })
+  cli2.command('pong', { description: 'pong', run: () => ({}) })
+
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Pre-stage a user-authored repo-root CONTEXT.md that must survive.
+  const userContext = join(installDir, 'CONTEXT.md')
+  const userBody = '# My project\n\nImportant local context that must not be clobbered.\n'
+  writeFileSync(userContext, userBody)
+
+  // Run two syncs on different CLIs under the same install dir.
+  await SyncSkills.sync(
+    'ctxtool-alpha',
+    Cli.toCommands.get(cli)!,
+    { global: false, cwd: installDir, description: 'Alpha' },
+  )
+  await SyncSkills.sync(
+    'ctxtool-beta',
+    Cli.toCommands.get(cli2)!,
+    { global: false, cwd: installDir, description: 'Beta' },
+  )
+
+  // 1. The user's repo-root CONTEXT.md is untouched.
+  expect(readFileSync(userContext, 'utf8')).toBe(userBody)
+
+  // 2. Each CLI got its own scoped context file under
+  //    `.agents/contexts/<name>.md` — both coexist.
+  const alphaPath = join(installDir, '.agents', 'contexts', 'ctxtool-alpha.md')
+  const betaPath = join(installDir, '.agents', 'contexts', 'ctxtool-beta.md')
+  expect(existsSync(alphaPath)).toBe(true)
+  expect(existsSync(betaPath)).toBe(true)
+  expect(readFileSync(alphaPath, 'utf8')).toContain('ctxtool-alpha')
+  expect(readFileSync(betaPath, 'utf8')).toContain('ctxtool-beta')
+  // No cross-clobbering: alpha's file does not mention beta and vice versa.
+  expect(readFileSync(alphaPath, 'utf8')).not.toContain('ctxtool-beta')
+  expect(readFileSync(betaPath, 'utf8')).not.toContain('ctxtool-alpha')
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('expandIncludeNames returns the same shadow set the install path uses', async () => {
   // Direct test of the helper used by both the write site and the
   // staleness check read site. If both sites compute the same set, their

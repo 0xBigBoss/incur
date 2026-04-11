@@ -142,6 +142,14 @@ export async function execute(command: any, options: execute.Options): Promise<e
       name,
       ok: okFn,
       options: resolvedOptions,
+      // Expose the transport mode so handlers that interact with
+      // `process.stdin` (e.g. the GraphQL `raw` command) can distinguish
+      // a CLI invocation (where stdin is the caller's real input stream)
+      // from MCP/HTTP transports (where `process.stdin` is the protocol
+      // pipe and reading it would corrupt or hang the server). Using
+      // `agent` for this is wrong: `agent` is also true for non-TTY CLI
+      // invocations like tests, CI, and shell pipes.
+      parseMode,
       var: varsMap,
       version,
     })

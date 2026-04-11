@@ -246,6 +246,7 @@ function createRawOperation(
         const parsed = optionsSchema.parse(context.options)
         const document = await resolveDocument({
           file: parsed.file,
+          parseMode: context.parseMode,
           query: parsed.query,
         })
         const operationName = parsed.operationName

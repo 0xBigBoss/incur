@@ -68,8 +68,24 @@ export async function generateCommands(
 
       const bodySchema =
         op.requestBody?.content?.['application/json']?.schema ?? swagger2BodyParam?.schema
-      const bodyProps = (bodySchema?.properties ?? {}) as Record<string, Record<string, unknown>>
-      const bodyRequired = new Set((bodySchema?.required as string[]) ?? [])
+      // OpenAPI request bodies can be any JSON type — object, array, or
+      // primitive. We flatten object properties into individual
+      // `--<prop>` options for ergonomics, but non-object bodies (array
+      // request bodies are common for bulk endpoints) used to be silently
+      // dropped: `bodySchema.properties` was undefined, `bodyKeys` was
+      // empty, and the handler skipped the body entirely. We now always
+      // expose a `--body` JSON escape hatch whenever a request body
+      // exists, and the handler prefers it when set.
+      const bodyIsObject =
+        !!bodySchema && typeof bodySchema === 'object' && (bodySchema as any).type === 'object'
+      const bodyProps = bodyIsObject
+        ? ((bodySchema as any).properties ?? {}) as Record<string, Record<string, unknown>>
+        : ({} as Record<string, Record<string, unknown>>)
+      const bodyRequired = bodyIsObject
+        ? new Set(((bodySchema as any).required as string[] | undefined) ?? [])
+        : new Set<string>()
+      const hasBodySchema = !!bodySchema
+      const bodyRequiredTopLevel = op.requestBody?.required === true
       const responseSchema = getResponseSchema(op.responses)
 
       // Build args Zod schema from path params
@@ -97,6 +113,18 @@ export async function generateCommands(
         let zodType = toZod(schema)
         if (!bodyRequired.has(key)) zodType = zodType.optional()
         optShape[key] = zodType
+      }
+      // Raw `--body` escape hatch for non-object bodies (arrays,
+      // primitives) and for object bodies where the caller wants to send
+      // extra fields not enumerated by the schema. Expressed as a JSON
+      // string so it round-trips cleanly via argv.
+      if (hasBodySchema) {
+        const bodyOption = z
+          .string()
+          .describe('Raw JSON request body. Overrides any flattened --<prop> options.')
+        // Only require the flag when the endpoint has a required
+        // non-object body and no flattened props to fall back on.
+        optShape.body = bodyRequiredTopLevel && !bodyIsObject ? bodyOption : bodyOption.optional()
       }
       const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
       const bodyZod =
@@ -180,13 +208,21 @@ function createHandler(config: {
       if (value !== undefined) query.set(p.name, String(value))
     }
 
-    // Build body from body properties
+    // Build request body. The raw `--body` escape hatch wins when set —
+    // it's the only way to submit non-object bodies (arrays, primitives)
+    // and also lets the caller include fields that were not enumerated
+    // in the schema's flattened properties. Otherwise fall back to the
+    // per-property convenience options.
     let body: string | undefined
-    const bodyKeys = Object.keys(config.bodyProps)
-    if (bodyKeys.length > 0) {
-      const bodyObj: Record<string, unknown> = {}
-      for (const key of bodyKeys) if (options[key] !== undefined) bodyObj[key] = options[key]
-      if (Object.keys(bodyObj).length > 0) body = JSON.stringify(bodyObj)
+    if (typeof options.body === 'string' && options.body.length > 0) {
+      body = options.body
+    } else {
+      const bodyKeys = Object.keys(config.bodyProps)
+      if (bodyKeys.length > 0) {
+        const bodyObj: Record<string, unknown> = {}
+        for (const key of bodyKeys) if (options[key] !== undefined) bodyObj[key] = options[key]
+        if (Object.keys(bodyObj).length > 0) body = JSON.stringify(bodyObj)
+      }
     }
 
     const input: Fetch.FetchInput = {

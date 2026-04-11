@@ -81,7 +81,7 @@ export async function sync(
 ): Promise<sync.Result> {
   const { contextRules = [], depth = 1, description, global = true } = options
   const cwd = resolveIncludeCwd({ cwd: options.cwd, global })
-  const contextPath = resolveContextPath({ cwd, global })
+  const contextPath = resolveContextPath({ cwd, global, name })
 
   const groups = new Map<string, string>()
   if (description) groups.set(name, description)
@@ -432,7 +432,30 @@ export function readIncludeCwd(name: string): string | undefined {
   return readMeta(name)?.includeCwd
 }
 
-function resolveContextPath(options: { cwd: string; global: boolean }): string {
-  if (!options.global) return path.join(options.cwd, 'CONTEXT.md')
-  return path.join(os.homedir(), '.agents', 'CONTEXT.md')
+/**
+ * Per-CLI context file path.
+ *
+ * Historically this returned the shared `CONTEXT.md` at the repo root
+ * (project-local mode) or `~/.agents/CONTEXT.md` (global mode), which
+ * caused two problems flagged in review:
+ *
+ * 1. In project-local mode the repo-root `CONTEXT.md` is commonly a
+ *    user-authored file (loaded by LLM wrappers, checked into git). Every
+ *    `skills add --no-global` run clobbered it.
+ * 2. In global mode `~/.agents/CONTEXT.md` is shared across every CLI on
+ *    the system. Running `skills add` on any single CLI wiped whatever
+ *    the previous one wrote — two CLIs with `incur` context files could
+ *    not coexist.
+ *
+ * The new layout is per-CLI and isolated from user-owned files:
+ *
+ * - global:        `~/.agents/contexts/<name>.md`
+ * - project-local: `<cwd>/.agents/contexts/<name>.md`
+ *
+ * No migration is done for old files at the legacy path — they are left
+ * in place so a user who had content there doesn't silently lose it.
+ */
+function resolveContextPath(options: { cwd: string; global: boolean; name: string }): string {
+  const base = options.global ? path.join(os.homedir(), '.agents') : path.join(options.cwd, '.agents')
+  return path.join(base, 'contexts', `${options.name}.md`)
 }

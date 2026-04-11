@@ -47,6 +47,85 @@ describe('generateCommands', () => {
     const cmd = commands.get('listUsers')!
     expect(cmd.description).toBe('List users')
   })
+
+  test('non-object request body (array) is submitted via --body escape hatch', async () => {
+    // Issue 1 regression: the generator used to flatten `bodySchema.properties`
+    // into option flags only. For endpoints whose request body is a top-level
+    // array or primitive, `properties` is undefined and the handler silently
+    // dropped the body — making the endpoint uninvokable. The fix: always
+    // expose a `--body` option (raw JSON string) when the endpoint has any
+    // request body; handler prefers it over the flattened-prop fallback.
+    const arraySpec = {
+      openapi: '3.0.0',
+      info: { title: 'Bulk API', version: '1.0.0' },
+      paths: {
+        '/bulk/insert': {
+          post: {
+            operationId: 'bulkInsert',
+            summary: 'Insert many',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+            responses: {
+              '200': { description: 'ok', content: { 'application/json': { schema: {} } } },
+            },
+          },
+        },
+      },
+    } as const
+
+    let capturedBody: string | undefined
+    let capturedContentType: string | null = null
+    const fetch = async (req: Request) => {
+      capturedBody = await req.text()
+      capturedContentType = req.headers.get('content-type')
+      return new Response(JSON.stringify({ received: JSON.parse(capturedBody) }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    const commands = await Openapi.generateCommands(arraySpec as any, fetch)
+    const bulkInsert = commands.get('bulkInsert')!
+    expect(bulkInsert).toBeDefined()
+    // The generator exposes `--body` when the body schema isn't an object,
+    // even if it's required. The handler passes the raw JSON string through.
+    const context = {
+      args: {},
+      options: { body: '["alpha","beta","gamma"]' },
+      error: (e: any) => ({ error: e }),
+      ok: (d: any) => d,
+    }
+    const result = await bulkInsert.run(context)
+    expect(capturedBody).toBe('["alpha","beta","gamma"]')
+    expect(capturedContentType).toBe('application/json')
+    expect(result).toEqual({ received: ['alpha', 'beta', 'gamma'] })
+  })
+
+  test('object request body still accepts flattened --<prop> options', async () => {
+    // Regression guard: the Issue 1 fix added a `--body` escape hatch but must
+    // not break the existing flattened-property convenience for object bodies.
+    let capturedBody: string | undefined
+    const fetch = async (req: Request) => {
+      capturedBody = await req.text()
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const commands = await Openapi.generateCommands(spec, fetch)
+    const createUser = commands.get('createUser')!
+    await createUser.run({
+      args: {},
+      options: { name: 'Bob' },
+      error: (e: any) => ({ error: e }),
+      ok: (d: any) => d,
+    })
+    expect(capturedBody).toBe('{"name":"Bob"}')
+  })
 })
 
 describe('cli integration', () => {

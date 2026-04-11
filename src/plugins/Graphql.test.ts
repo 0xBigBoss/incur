@@ -342,6 +342,33 @@ describe('graphql', () => {
     }
   })
 
+  test('graphql raw without --query/--file fails fast under MCP instead of reading stdin', async () => {
+    // Issue 2 regression: `raw` is mounted as a normal command, so the MCP
+    // and HTTP transports reuse the same handler. Under those transports
+    // `process.stdin` is the JSON-RPC protocol pipe — reading it would
+    // either corrupt the protocol or hang the server forever. The fix
+    // gates the stdin fallback on `parseMode === 'argv'`, which the CLI
+    // transport sets but MCP/HTTP do not. Any stdin-less invocation under
+    // MCP/HTTP must return `GRAPHQL_DOCUMENT_REQUIRED` synchronously.
+    // Invoke `resolveDocument` directly with MCP-shaped contexts
+    // (`parseMode: 'flat'` / `'split'`). Going through `cli.serve()`
+    // would use the CLI transport (parseMode=argv) which is tested
+    // above. This test specifically proves the stdin-bypass gate.
+    const { resolveDocument } = await import('./graphql/Raw.js')
+    const server = await startTestServer()
+    try {
+      await expect(
+        resolveDocument({ parseMode: 'flat', file: undefined, query: undefined }),
+      ).rejects.toThrow(/GRAPHQL_DOCUMENT_REQUIRED|Provide a GraphQL document/)
+      // `split` (HTTP transport) is also excluded.
+      await expect(
+        resolveDocument({ parseMode: 'split', file: undefined, query: undefined }),
+      ).rejects.toThrow(/GRAPHQL_DOCUMENT_REQUIRED|Provide a GraphQL document/)
+    } finally {
+      await server.close()
+    }
+  })
+
   test('surfaces structured graphql errors for raw execution', async () => {
     const server = await startTestServer()
     try {
