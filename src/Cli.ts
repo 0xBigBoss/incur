@@ -516,6 +516,17 @@ export declare namespace create {
           depth?: number | undefined
           /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). */
           include?: string[] | undefined
+          /**
+           * Inline SKILL.md entries baked in at build time. Use when the CLI
+           * is compiled into a single-file executable and the source tree
+           * that `include` globs against is unreachable at runtime — import
+           * the SKILL.md body as text (e.g. Bun's
+           * `import skill from './SKILL.md' with { type: 'text' }`) and pass
+           * it here. Inline entries yield to same-name skills produced by
+           * the command generator or by `include` so live dev-mode edits
+           * stay authoritative.
+           */
+          skills?: Array<{ name: string; content: string }> | undefined
           /** Example prompts shown after sync to help users get started. */
           suggestions?: string[] | undefined
         }
@@ -816,6 +827,7 @@ async function serveImpl(
         description: options.description,
         global,
         include: options.sync?.include,
+        skills: options.sync?.skills,
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
@@ -2222,6 +2234,7 @@ declare namespace serveImpl {
           cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined
+          skills?: Array<{ name: string; content: string }> | undefined
           suggestions?: string[] | undefined
         }
       | undefined

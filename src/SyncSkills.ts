@@ -63,6 +63,34 @@ export async function sync(
       }
     }
 
+    // Include additional SKILL.md files from inline content.
+    //
+    // Build-time escape hatch for CLIs compiled into single-file executables
+    // (e.g. `bun build --compile`): the source tree that `include` globs
+    // against no longer exists at runtime, so the caller bakes SKILL.md
+    // bodies into the binary via a text import
+    // (`import skill from './SKILL.md' with { type: 'text' }`) and passes
+    // the strings here. Installed via the same tmpDir pipeline as
+    // glob-loaded skills so the downstream install flow is identical.
+    //
+    // Inline is a *fallback*, not an override: if `include` (or the
+    // command generator) already produced a skill with the same name, skip
+    // the inline entry entirely. Rationale: in dev mode, `include` reads
+    // the live source file, which may be fresher than whatever was baked
+    // into the binary at last build; in compiled-binary mode, `include`
+    // finds nothing and inline takes over. Using "skip-if-exists" instead
+    // of "overwrite" keeps dev-mode edits authoritative.
+    if (options.skills) {
+      for (const skill of options.skills) {
+        if (skills.some((s) => s.name === skill.name)) continue
+        const dest = path.join(tmpDir, skill.name, 'SKILL.md')
+        await fs.mkdir(path.dirname(dest), { recursive: true })
+        await fs.writeFile(dest, skill.content)
+        const descMatch = skill.content.match(/^description:\s*(.+)$/m)
+        skills.push({ name: skill.name, description: descMatch?.[1], external: true })
+      }
+    }
+
     const { paths, agents } = Agents.install(tmpDir, { global, cwd })
 
     // Remove stale skills from previous installs
@@ -100,6 +128,18 @@ export declare namespace sync {
     global?: boolean | undefined
     /** Glob patterns for directories containing SKILL.md files to include (e.g. `"skills/*"`, `"my-skill"`). Skill name is the parent directory name. */
     include?: string[] | undefined
+    /**
+     * Inline SKILL.md entries to install alongside the generated and
+     * glob-included ones. Intended for CLIs compiled into single-file
+     * executables where `include` globs cannot reach the original source
+     * tree at runtime — bake the body in via a text import at build time
+     * (e.g. Bun's `import skill from './SKILL.md' with { type: 'text' }`)
+     * and pass it through here. Inline entries act as a fallback: if a
+     * skill with the same `name` was already produced by the command
+     * generator or by `include`, the inline entry is skipped so dev-mode
+     * filesystem edits stay authoritative.
+     */
+    skills?: Array<{ name: string; content: string }> | undefined
   }
   /** Result of a sync operation. */
   type Result = {
