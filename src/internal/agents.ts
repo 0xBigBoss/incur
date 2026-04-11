@@ -197,9 +197,28 @@ export function install(sourceDir: string, options: install.Options = {}): insta
 
   const paths: string[] = []
   const agents: install.AgentInstall[] = []
+  const canonicalBaseResolved = path.resolve(canonicalBase)
 
   for (const skill of discoverSkills(sourceDir)) {
     const canonicalDir = path.join(canonicalBase, skill.name)
+
+    // Backstop containment check. `sanitizeName()` collapses `..` to `''`,
+    // and `path.join(base, '')` equals `base` — so a SKILL.md whose
+    // frontmatter `name:` is `..` would otherwise resolve `canonicalDir` to
+    // `canonicalBase` itself and the `rmForce` below would wipe every
+    // installed skill in one shot. Refuse to install any skill whose
+    // resolved canonical path is not strictly inside `canonicalBase`. This
+    // is independent of the per-name validation in `SyncSkills.sync()` so
+    // any future caller (or any unsafe sanitizer edge case) inherits the
+    // protection automatically.
+    const canonicalDirResolved = path.resolve(canonicalDir)
+    if (
+      canonicalDirResolved === canonicalBaseResolved ||
+      !canonicalDirResolved.startsWith(canonicalBaseResolved + path.sep)
+    )
+      throw new Error(
+        `refusing to install skill: resolved path ${canonicalDirResolved} escapes canonical skills directory ${canonicalBaseResolved}`,
+      )
 
     // Copy to canonical location
     rmForce(canonicalDir)

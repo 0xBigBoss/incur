@@ -256,6 +256,37 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
 }
 
 /**
+ * Returns the set of slugified skill directory names that `split(name,
+ * commands, depth)` would emit. Mirrors `renderGroup`'s slug algorithm
+ * without doing the full render. Used by `SyncSkills` and `Cli.serve` to
+ * filter `sync.skills` inline entries against the command-derived shadow set
+ * before hashing — keeps both the write side and the staleness-check read
+ * side in agreement on the hash without either site doing a filesystem walk
+ * to expand `include` globs.
+ */
+export function generatedNames(name: string, commands: CommandInfo[], depth: number): Set<string> {
+  const out = new Set<string>()
+  if (depth === 0) {
+    out.add(slugify(name))
+    return out
+  }
+  for (const cmd of commands) {
+    const segments = cmd.name.split(' ')
+    const prefix = segments.slice(0, depth).join(' ')
+    out.add(slugify(`${name} ${prefix}`))
+  }
+  return out
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+/**
  * Computes a deterministic hash of command structure for staleness detection.
  *
  * The optional `extras` argument folds in build-time-baked SKILL.md bodies

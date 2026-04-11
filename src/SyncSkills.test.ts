@@ -240,6 +240,105 @@ description: never written
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync.skills rejects malicious frontmatter `name:` even when skill.name is safe', async () => {
+  // The directory name is sanitized at the SyncSkills layer, but
+  // `Agents.install()` re-reads the SKILL.md from disk and prefers the
+  // frontmatter `name:` over the directory name. `sanitizeName()` collapses
+  // `..` to `''`, and `path.join(canonicalBase, '')` equals `canonicalBase`
+  // — so without this guard, the install loop's `rmForce(canonicalDir)`
+  // would wipe the user's entire `.agents/skills` tree.
+  const tmp = join(tmpdir(), `clac-inline-frontmatter-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('frontmatter-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Drop a marker skill into the canonical install dir to prove that a
+  // successful exploit would have wiped it.
+  const canary = join(installDir, '.agents', 'skills', 'canary', 'SKILL.md')
+  mkdirSync(join(installDir, '.agents', 'skills', 'canary'), { recursive: true })
+  writeFileSync(canary, '---\nname: canary\n---\nstill here\n')
+
+  const evilFrontmatters = [
+    '---\nname: ..\n---\nbody\n',
+    '---\nname: .\n---\nbody\n',
+    '---\nname: \n---\nbody\n',
+    '---\nname: ../escape\n---\nbody\n',
+    '---\nname: foo/bar\n---\nbody\n',
+  ]
+  for (const content of evilFrontmatters) {
+    await expect(
+      SyncSkills.sync('frontmatter-tool', commands, {
+        global: false,
+        cwd: installDir,
+        skills: [{ name: 'safe-dir', content }],
+      }),
+    ).rejects.toThrow(/sync\.skills: invalid SKILL\.md frontmatter `name:`/)
+  }
+
+  // Canary survived — the throw fired before any rmForce could run.
+  expect(existsSync(canary)).toBe(true)
+  expect(readFileSync(canary, 'utf8')).toContain('still here')
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('staleness hash ignores inline entries shadowed by command-derived skills', async () => {
+  // Issue 4 regression: when an inline `sync.skills` entry has the same
+  // name as a command-derived skill, the inline never lands on disk (the
+  // command wins). Changing only the shadowed inline body must NOT trip
+  // the staleness check, otherwise users get a false "out of date" prompt
+  // for content that was never installed.
+  const tmp = join(tmpdir(), `clac-inline-shadow-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  // Single command 'ping' → command-derived skill name 'shadow-tool-ping'
+  // (slug of `${cliName} ${firstSegment}`).
+  const cli = Cli.create('shadow-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const v1 = `---
+name: shadow-tool-ping
+description: shadowed v1
+---
+body v1
+`
+  await SyncSkills.sync('shadow-tool', commands, {
+    global: false,
+    cwd: installDir,
+    skills: [{ name: 'shadow-tool-ping', content: v1 }],
+  })
+  const hash1 = SyncSkills.readHash('shadow-tool')
+
+  // Same shadowed name, completely different body. Hash MUST NOT change.
+  const v2 = `---
+name: shadow-tool-ping
+description: shadowed v2 (totally different)
+---
+body v2 with much more content
+`
+  await SyncSkills.sync('shadow-tool', commands, {
+    global: false,
+    cwd: installDir,
+    skills: [{ name: 'shadow-tool-ping', content: v2 }],
+  })
+  const hash2 = SyncSkills.readHash('shadow-tool')
+
+  expect(hash1).toBeDefined()
+  expect(hash2).toBeDefined()
+  expect(hash1).toBe(hash2)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('staleness hash changes when inline sync.skills content changes', async () => {
   // Regression: a compiled binary that re-bakes a SKILL.md body but leaves
   // commands untouched must still trip the out-of-date check, otherwise

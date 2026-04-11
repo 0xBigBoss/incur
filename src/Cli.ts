@@ -674,9 +674,16 @@ async function serveImpl(
       if (stored) {
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups)
-        // Pass `sync.skills` so a compiled binary that bakes new inline skill
-        // bodies but leaves commands untouched still tips the staleness check.
-        if (Skill.hash(entries, options.sync?.skills) !== stored) {
+        // Filter inline `sync.skills` against the command-derived shadow set
+        // before hashing — mirrors the write site in `SyncSkills.sync()` so
+        // both hashes agree. A baked inline body whose name is shadowed by a
+        // command-generated skill never contributes to the staleness signal,
+        // because it would never be installed in the first place.
+        const depth = options.sync?.depth ?? 1
+        const generatedNames = Skill.generatedNames(name, entries, depth)
+        const inlineForHash =
+          options.sync?.skills?.filter((s) => !generatedNames.has(s.name)) ?? undefined
+        if (Skill.hash(entries, inlineForHash) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)
           skillsCta = {

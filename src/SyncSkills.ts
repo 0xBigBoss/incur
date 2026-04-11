@@ -8,6 +8,25 @@ import { formatExamples } from './Cli.js'
 import * as Agents from './internal/agents.js'
 import * as Skill from './Skill.js'
 
+/**
+ * Throws if a skill name (or SKILL.md frontmatter `name:` value) is shaped
+ * such that it could escape `tmpDir` or — after passing through
+ * `Agents.install()`'s `sanitizeName()` — collapse to an empty / `.` / `..`
+ * value that would resolve `canonicalDir` to `canonicalBase` itself and let
+ * the install loop's `rmForce` wipe every installed skill.
+ */
+function assertSafeSkillName(name: string, prefix: string): void {
+  if (
+    !name ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('\0') ||
+    name === '.' ||
+    name === '..'
+  )
+    throw new Error(`${prefix} ${JSON.stringify(name)}`)
+}
+
 /** Generates skill files from a command map and installs them natively. */
 export async function sync(
   name: string,
@@ -91,15 +110,26 @@ export async function sync(
         // (which only `rm`s `tmpDir`) would not remove it. Fail loud here
         // instead of silently rewriting, since a path-shaped `name` always
         // indicates a caller bug, not a legitimate use case.
-        if (
-          !skill.name ||
-          skill.name.includes('/') ||
-          skill.name.includes('\\') ||
-          skill.name.includes('\0') ||
-          skill.name === '.' ||
-          skill.name === '..'
-        )
-          throw new Error(`sync.skills: invalid skill name ${JSON.stringify(skill.name)}`)
+        assertSafeSkillName(skill.name, 'sync.skills: invalid skill name')
+        // The frontmatter `name:` is also a vector. `Agents.install()`
+        // re-reads SKILL.md from disk and **prefers the frontmatter name
+        // over the directory name**, then sanitizes via `sanitizeName()`
+        // which collapses `..` to `''`. An empty name then resolves
+        // `canonicalDir` to `canonicalBase` itself and `rmForce` would wipe
+        // every installed skill. The Agents-layer containment check is the
+        // backstop, but we also fail loud here so a buggy caller sees the
+        // problem at the source rather than getting a generic install error.
+        // `\s*` would match newlines and slide the capture into the next
+        // line — for `name: \n---\n` the greedy `(.+)` would then capture
+        // the YAML delimiter `---`, smuggling an empty/`...`-shaped name
+        // past the validator. Use `[^\S\n]*` (whitespace except newline) so
+        // the match stays anchored to the `name:` line.
+        const inlineNameMatch = skill.content.match(/^name:[^\S\n]*(.*)$/m)
+        if (inlineNameMatch)
+          assertSafeSkillName(
+            inlineNameMatch[1]?.trim() ?? '',
+            'sync.skills: invalid SKILL.md frontmatter `name:`',
+          )
         if (skills.some((s) => s.name === skill.name)) continue
         const dest = path.join(tmpDir, skill.name, 'SKILL.md')
         // Defense in depth: even if the regex above misses some platform
@@ -127,12 +157,22 @@ export async function sync(
       }
     }
 
-    // Write skills hash + names for staleness detection. Inline `options.skills`
-    // is folded into the hash so a rebuilt compiled binary with updated baked
-    // SKILL.md bodies (but unchanged commands) still trips the out-of-date
-    // check on the next `serve` call.
+    // Write skills hash + names for staleness detection. Inline entries that
+    // are shadowed by a command-derived skill of the same name don't
+    // contribute to the hash, so changing a shadowed baked body doesn't
+    // produce a false "Skills are out of date" prompt. The read side in
+    // `Cli.serve` mirrors this exact filter so the two hashes always agree.
+    //
+    // Inline entries shadowed by an `include` glob are still hashed: the
+    // read side cannot expand globs without doing a filesystem walk on every
+    // CLI invocation. The residual false positive only fires in dev mode
+    // (where `include` matches the live source tree); compiled binaries
+    // never see it because their `include` finds nothing at runtime.
     const hashEntries = collectEntries(commands, [])
-    writeMeta(name, Skill.hash(hashEntries, options.skills), [...currentNames])
+    const generatedNames = Skill.generatedNames(name, hashEntries, depth)
+    const inlineForHash =
+      options.skills?.filter((s) => !generatedNames.has(s.name)) ?? undefined
+    writeMeta(name, Skill.hash(hashEntries, inlineForHash), [...currentNames])
 
     return { skills, paths, agents }
   } finally {
