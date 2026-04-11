@@ -125,10 +125,18 @@ export async function generateCommands(
         if (p.description) zodType = zodType.describe(p.description)
         optShape[p.name] = coerceIfNeeded(zodType)
       }
+      // Flattened body properties are ALWAYS optional at schema time, even
+      // when the OpenAPI spec marks them required. Parser validation runs
+      // before `resolveCommandOptions`, which is where the `--json`
+      // full-payload flag's fields get merged into `options` — marking a
+      // per-prop flag required at schema time would reject
+      // `--json '{"name":"Bob"}'` with a spurious "name is missing" error
+      // because the flattened `name` option isn't populated yet. The
+      // `bodyRequired` set below is still passed into the handler, which
+      // enforces requiredness AFTER the merge sees all three input
+      // channels (--body, --json, flattened --<prop> flags).
       for (const [key, schema] of Object.entries(bodyProps)) {
-        let zodType = toZod(schema)
-        if (!bodyRequired.has(key)) zodType = zodType.optional()
-        optShape[key] = zodType
+        optShape[key] = toZod(schema).optional()
       }
       // Raw `--body` escape hatch for non-object bodies (arrays,
       // primitives) and for object bodies where the caller wants to send
@@ -200,6 +208,7 @@ export async function generateCommands(
           pathParams,
           queryParams,
           bodyProps,
+          bodyRequiredProps: [...bodyRequired],
           bodyRequired: bodyRequiredTopLevel,
           operationId: name,
         }),
@@ -215,6 +224,13 @@ function createHandler(config: {
   bodyProps: Record<string, Record<string, unknown>>
   /** True when the OpenAPI spec declares the request body as required. */
   bodyRequired: boolean
+  /**
+   * Names of body properties that the OpenAPI spec marks as required.
+   * Enforced in the handler after body assembly, because the per-prop
+   * flags are kept optional at schema time so the `--json` full-payload
+   * route (which merges after Parser validation) can populate them.
+   */
+  bodyRequiredProps: string[]
   fetch: FetchHandler
   httpMethod: string
   operationId: string
@@ -257,15 +273,41 @@ function createHandler(config: {
     }
 
     // Enforce requiredness AFTER merging `--body` / `--json` / flattened
-    // props. `--body` is optional at schema time (see generator
-    // comment) so Parser validation can't catch a missing required body
-    // without also rejecting the `--json` full-payload path. This is
-    // the single post-merge gate that covers all three input channels.
+    // props. The schema keeps the per-prop flags and the raw `--body`
+    // flag optional at Parser time so the `--json` full-payload route
+    // can populate them via `resolveCommandOptions` (which runs after
+    // Parser validation). This is the single post-merge gate that
+    // covers all three input channels.
     if (!body && config.bodyRequired)
       return context.error({
         code: 'VALIDATION_ERROR',
         message: `${config.operationId}: request body is required — pass --body <json> or --json <json>`,
       })
+
+    // For object bodies with declared required properties, check that
+    // the final merged body contains them. This closes the loop for
+    // `--json '{"partial":"yes"}'` and friends: the handler sees the
+    // full merged payload and can name the missing fields precisely.
+    if (body && config.bodyRequiredProps.length > 0) {
+      let parsedBody: unknown
+      try {
+        parsedBody = JSON.parse(body)
+      } catch (err) {
+        return context.error({
+          code: 'VALIDATION_ERROR',
+          message: `${config.operationId}: request body is not valid JSON — ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+      if (parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)) {
+        const record = parsedBody as Record<string, unknown>
+        const missing = config.bodyRequiredProps.filter((k) => record[k] === undefined)
+        if (missing.length > 0)
+          return context.error({
+            code: 'VALIDATION_ERROR',
+            message: `${config.operationId}: missing required body fields: ${missing.join(', ')}`,
+          })
+      }
+    }
 
     const input: Fetch.FetchInput = {
       path: urlPath,

@@ -221,6 +221,88 @@ describe('generateCommands', () => {
     expect(json(output)).toEqual({ ok: true })
   })
 
+  test('--json payload works for required object bodies (end-to-end via cli.serve)', async () => {
+    // Issue 6 regression: even after Issues 4 and 5 were fixed, required
+    // per-prop flags on object bodies were still emitted as
+    // schema-required, so `api createUser --json '{"name":"Bob"}'`
+    // failed Parser validation with "name is missing" before
+    // `resolveCommandOptions` got a chance to merge the --json payload
+    // into options. Fix: always mark flattened per-prop flags as
+    // optional at schema time and enforce requiredness in the handler
+    // AFTER the merge. This test is the reviewer's exact repro
+    // against the shipped `createUser` OpenAPI 3 fixture.
+    let capturedBody: string | undefined
+    const fetch = async (req: Request) => {
+      capturedBody = await req.text()
+      return new Response(JSON.stringify({ created: true, name: 'Bob' }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const cli = Cli.create('t').command('api', { fetch, openapi: spec })
+    // Happy path: --json supplies the required `name`.
+    const happy = await serve(cli, [
+      'api',
+      'createUser',
+      '--json',
+      '{"name":"Bob"}',
+      '--format',
+      'json',
+    ])
+    expect(happy.exitCode).toBeUndefined()
+    expect(capturedBody).toBe('{"name":"Bob"}')
+    expect(json(happy.output)).toEqual({ created: true, name: 'Bob' })
+
+    // Missing required field via --json: resolveCommandOptions validates
+    // the payload against the full body schema and rejects before the
+    // handler runs. Fetch is not called.
+    capturedBody = undefined
+    const missingJson = await serve(cli, [
+      'api',
+      'createUser',
+      '--json',
+      '{}',
+      '--format',
+      'json',
+    ])
+    expect(missingJson.exitCode).toBe(1)
+    expect(capturedBody).toBeUndefined()
+    expect(missingJson.output).toContain('VALIDATION_ERROR')
+    expect(missingJson.output).toContain('name')
+
+    // Missing required field via --body (the raw escape hatch bypasses
+    // `resolveCommandOptions` schema validation because --body is a
+    // string, not the parsed payload). The handler's post-merge gate
+    // catches it and emits a VALIDATION_ERROR that names the missing
+    // field. This is the path my handler validation specifically
+    // covers — it's unreachable via --json.
+    capturedBody = undefined
+    const missingBody = await serve(cli, [
+      'api',
+      'createUser',
+      '--body',
+      '{}',
+      '--format',
+      'json',
+    ])
+    expect(missingBody.exitCode).toBe(1)
+    expect(capturedBody).toBeUndefined()
+    expect(missingBody.output).toContain('missing required body fields')
+    expect(missingBody.output).toContain('name')
+
+    // Flattened --<prop> path still works for the common case.
+    capturedBody = undefined
+    const flat = await serve(cli, [
+      'api',
+      'createUser',
+      '--name',
+      'Alice',
+      '--format',
+      'json',
+    ])
+    expect(flat.exitCode).toBeUndefined()
+    expect(capturedBody).toBe('{"name":"Alice"}')
+  })
+
   test('object request body still accepts flattened --<prop> options', async () => {
     // Regression guard: the Issue 1 fix added a `--body` escape hatch but must
     // not break the existing flattened-property convenience for object bodies.
