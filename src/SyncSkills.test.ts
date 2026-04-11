@@ -287,6 +287,145 @@ test('sync.skills rejects malicious frontmatter `name:` even when skill.name is 
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync.include _root rejects malicious frontmatter `name:`', async () => {
+  // Issue 5 regression: the `_root` include path takes its skill name from
+  // the root SKILL.md frontmatter and used to write directly to
+  // `path.join(tmpDir, name, 'SKILL.md')` with no validation. The shipped
+  // CLI defaults to `include: ['_root']`, so an attacker who can drop or
+  // edit a root SKILL.md (e.g. via a compromised dependency or a worktree
+  // checkout containing one) could otherwise write a SKILL.md outside
+  // `tmpDir`. The cleanup `finally` only removes `tmpDir`, so the escaped
+  // file would survive.
+  const tmp = join(tmpdir(), `clac-include-root-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('root-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Drop a canary in a parent directory to detect any escape.
+  const escapeTarget = join(installDir, '..', 'escape')
+  if (existsSync(escapeTarget))
+    rmSync(escapeTarget, { recursive: true, force: true })
+
+  // Place a malicious root SKILL.md in the include cwd.
+  writeFileSync(
+    join(installDir, 'SKILL.md'),
+    `---
+name: ../escape
+description: Should be rejected before any write.
+---
+body
+`,
+  )
+
+  await expect(
+    SyncSkills.sync('root-tool', commands, {
+      global: false,
+      cwd: installDir,
+      include: ['_root'],
+    }),
+  ).rejects.toThrow(/sync\.include _root: invalid SKILL\.md frontmatter `name:`/)
+
+  // No SKILL.md landed at the escape path.
+  expect(existsSync(join(escapeTarget, 'SKILL.md'))).toBe(false)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('staleness hash ignores inline entries shadowed by include glob (Issue 6)', async () => {
+  // Issue 6 regression: when an inline `sync.skills` entry has the same
+  // name as a SKILL.md picked up by an `include` glob, the inline never
+  // lands on disk (the glob match wins). Changing only the shadowed inline
+  // body must NOT trip the staleness check, otherwise users get a false
+  // "out of date" prompt for content that was never installed. The fix
+  // requires the read site to walk include globs the same way as the write
+  // site so both hashes filter the same shadow set.
+  const tmp = join(tmpdir(), `clac-include-shadow-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('include-shadow-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Stage a glob-matched skill in the source tree.
+  const skillDir = join(installDir, 'skills', 'shared')
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(
+    join(skillDir, 'SKILL.md'),
+    `---
+name: shared
+description: live source
+---
+live body
+`,
+  )
+
+  const v1 = `---
+name: shared
+description: shadowed v1
+---
+shadowed body v1
+`
+  await SyncSkills.sync('include-shadow-tool', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['skills/*'],
+    skills: [{ name: 'shared', content: v1 }],
+  })
+  const hash1 = SyncSkills.readHash('include-shadow-tool')
+
+  const v2 = `---
+name: shared
+description: shadowed v2 (different)
+---
+shadowed body v2 with way more content than v1
+`
+  await SyncSkills.sync('include-shadow-tool', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['skills/*'],
+    skills: [{ name: 'shared', content: v2 }],
+  })
+  const hash2 = SyncSkills.readHash('include-shadow-tool')
+
+  expect(hash1).toBeDefined()
+  expect(hash2).toBeDefined()
+  expect(hash1).toBe(hash2)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('expandIncludeNames returns the same shadow set the install path uses', async () => {
+  // Direct test of the helper used by both the write site and the
+  // staleness check read site. If both sites compute the same set, their
+  // hashes will agree.
+  const tmp = join(tmpdir(), `clac-expand-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  // Two glob-matched skills via 'skills/*' + a root SKILL.md.
+  mkdirSync(join(tmp, 'skills', 'alpha'), { recursive: true })
+  writeFileSync(join(tmp, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\n---\n')
+  mkdirSync(join(tmp, 'skills', 'beta'), { recursive: true })
+  writeFileSync(join(tmp, 'skills', 'beta', 'SKILL.md'), '---\nname: beta\n---\n')
+  writeFileSync(join(tmp, 'SKILL.md'), '---\nname: rooted\n---\n')
+
+  const names = await SyncSkills.expandIncludeNames('cli', ['_root', 'skills/*'], tmp)
+  expect(new Set(names)).toEqual(new Set(['rooted', 'alpha', 'beta']))
+
+  // Empty / undefined include short-circuits to empty set without I/O.
+  expect((await SyncSkills.expandIncludeNames('cli', undefined, tmp)).size).toBe(0)
+  expect((await SyncSkills.expandIncludeNames('cli', [], tmp)).size).toBe(0)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('staleness hash ignores inline entries shadowed by command-derived skills', async () => {
   // Issue 4 regression: when an inline `sync.skills` entry has the same
   // name as a command-derived skill, the inline never lands on disk (the

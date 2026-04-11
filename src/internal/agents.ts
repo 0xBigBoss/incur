@@ -324,8 +324,11 @@ function discoverSkills(rootDir: string): { name: string; dir: string; root?: bo
       const skillPath = path.join(subDir, 'SKILL.md')
       if (fs.existsSync(skillPath)) {
         const content = fs.readFileSync(skillPath, 'utf8')
-        const nameMatch = content.match(/^name:\s*(.+)$/m)
-        results.push({ name: sanitizeName(nameMatch?.[1] ?? entry.name), dir: subDir })
+        // `\s*` matches newlines and would let an empty `name:` line slide
+        // its capture into the next line (e.g. the YAML `---` delimiter).
+        // Use `[^\S\n]*` so the match stays anchored to the `name:` line.
+        const nameMatch = content.match(/^name:[^\S\n]*(.*)$/m)
+        results.push({ name: sanitizeName(nameMatch?.[1]?.trim() ?? entry.name), dir: subDir })
       }
       visit(subDir)
     }
@@ -337,8 +340,8 @@ function discoverSkills(rootDir: string): { name: string; dir: string; root?: bo
   const rootSkill = path.join(rootDir, 'SKILL.md')
   if (fs.existsSync(rootSkill)) {
     const content = fs.readFileSync(rootSkill, 'utf8')
-    const nameMatch = content.match(/^name:\s*(.+)$/m)
-    const name = sanitizeName(nameMatch?.[1] ?? 'skill')
+    const nameMatch = content.match(/^name:[^\S\n]*(.*)$/m)
+    const name = sanitizeName(nameMatch?.[1]?.trim() || 'skill')
     if (!results.some((r) => r.name === name)) results.push({ name, dir: rootDir, root: true })
   }
 

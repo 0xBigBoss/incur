@@ -674,15 +674,28 @@ async function serveImpl(
       if (stored) {
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups)
-        // Filter inline `sync.skills` against the command-derived shadow set
-        // before hashing — mirrors the write site in `SyncSkills.sync()` so
-        // both hashes agree. A baked inline body whose name is shadowed by a
-        // command-generated skill never contributes to the staleness signal,
-        // because it would never be installed in the first place.
+        // Filter inline `sync.skills` against the same shadow set the write
+        // site in `SyncSkills.sync()` uses: command-derived skill names ∪
+        // include glob skill names. The include walk is async I/O on every
+        // CLI invocation that has a non-empty `include`; for shipped
+        // binaries `include` is typically empty (no source tree at runtime)
+        // so the helper is a no-op. We only invoke it when there's at least
+        // one inline entry that could possibly be shadowed.
         const depth = options.sync?.depth ?? 1
         const generatedNames = Skill.generatedNames(name, entries, depth)
-        const inlineForHash =
-          options.sync?.skills?.filter((s) => !generatedNames.has(s.name)) ?? undefined
+        let inlineForHash = options.sync?.skills as
+          | ReadonlyArray<{ name: string; content: string }>
+          | undefined
+        if (inlineForHash?.length) {
+          const cwd = SyncSkills.resolveIncludeCwd({ cwd: options.sync?.cwd })
+          const includeShadowed = await SyncSkills.expandIncludeNames(
+            name,
+            options.sync?.include,
+            cwd,
+          )
+          const shadowed = new Set<string>([...generatedNames, ...includeShadowed])
+          inlineForHash = inlineForHash.filter((s) => !shadowed.has(s.name))
+        }
         if (Skill.hash(entries, inlineForHash) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)

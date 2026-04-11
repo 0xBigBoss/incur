@@ -9,6 +9,60 @@ import * as Agents from './internal/agents.js'
 import * as Skill from './Skill.js'
 
 /**
+ * Returns the set of skill names that the configured `include` glob
+ * patterns would resolve in `cwd`. Mirrors the naming logic in
+ * `SyncSkills.sync()`'s include loop without writing or reading
+ * descriptions: non-`_root` patterns use the directory basename (no I/O),
+ * `_root` reads the SKILL.md frontmatter for its `name:` value.
+ *
+ * Used by both `SyncSkills.sync()` and `Cli.serve`'s staleness check to
+ * filter inline `sync.skills` entries against the same shadow set the
+ * install path uses, so a baked inline body whose name is also matched by
+ * an `include` source doesn't produce a false "Skills are out of date"
+ * prompt when its content is updated. Frontmatter that fails the safety
+ * check is silently dropped from the shadow set; the throwing pre-check
+ * lives in `SyncSkills.sync()`'s install path so a real attack still
+ * surfaces a hard error there, but the read-time staleness check must not
+ * crash the CLI for unrelated commands.
+ */
+export async function expandIncludeNames(
+  cliName: string,
+  include: ReadonlyArray<string> | undefined,
+  cwd: string,
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  if (!include?.length) return out
+  for (const pattern of include) {
+    const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
+    for await (const match of fs.glob(globPattern, { cwd })) {
+      if (pattern === '_root') {
+        try {
+          const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
+          const nameMatch = content.match(/^name:[^\S\n]*(.*)$/m)
+          const skillName = nameMatch?.[1]?.trim() || cliName
+          if (isSafeSkillName(skillName)) out.add(skillName)
+        } catch {}
+      } else {
+        out.add(path.basename(path.dirname(match)))
+      }
+    }
+  }
+  return out
+}
+
+/** @internal Pure predicate version of `assertSafeSkillName`. */
+function isSafeSkillName(name: string): boolean {
+  return (
+    !!name &&
+    !name.includes('/') &&
+    !name.includes('\\') &&
+    !name.includes('\0') &&
+    name !== '.' &&
+    name !== '..'
+  )
+}
+
+/**
  * Throws if a skill name (or SKILL.md frontmatter `name:` value) is shaped
  * such that it could escape `tmpDir` or — after passing through
  * `Agents.install()`'s `sanitizeName()` — collapse to an empty / `.` / `..`
@@ -16,15 +70,7 @@ import * as Skill from './Skill.js'
  * the install loop's `rmForce` wipe every installed skill.
  */
 function assertSafeSkillName(name: string, prefix: string): void {
-  if (
-    !name ||
-    name.includes('/') ||
-    name.includes('\\') ||
-    name.includes('\0') ||
-    name === '.' ||
-    name === '..'
-  )
-    throw new Error(`${prefix} ${JSON.stringify(name)}`)
+  if (!isSafeSkillName(name)) throw new Error(`${prefix} ${JSON.stringify(name)}`)
 }
 
 /** Generates skill files from a command map and installs them natively. */
@@ -34,7 +80,7 @@ export async function sync(
   options: sync.Options = {},
 ): Promise<sync.Result> {
   const { contextRules = [], depth = 1, description, global = true } = options
-  const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
+  const cwd = resolveIncludeCwd({ cwd: options.cwd, global })
   const contextPath = resolveContextPath({ cwd, global })
 
   const groups = new Map<string, string>()
@@ -61,21 +107,57 @@ export async function sync(
     await fs.writeFile(contextPath, `${context}\n`)
 
     // Include additional SKILL.md files matched by glob patterns
+    const tmpDirResolved = path.resolve(tmpDir)
     if (options.include) {
       for (const pattern of options.include) {
         const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md')
         for await (const match of fs.glob(globPattern, { cwd })) {
+          let content: string
           try {
-            const content = await fs.readFile(path.resolve(cwd, match), 'utf8')
-            const nameMatch = content.match(/^name:\s*(.+)$/m)
-            const skillName =
-              pattern === '_root' ? (nameMatch?.[1] ?? name) : path.basename(path.dirname(match))
-            const dest = path.join(tmpDir, skillName, 'SKILL.md')
+            content = await fs.readFile(path.resolve(cwd, match), 'utf8')
+          } catch {
+            continue
+          }
+          // `\s*` would match newlines and slide the `(.+)` capture into the
+          // next line — for an empty `name:` line, the YAML delimiter `---`
+          // on the following line would be picked up as the name. Use
+          // `[^\S\n]*` so the match stays anchored to the `name:` line.
+          const nameMatch = content.match(/^name:[^\S\n]*(.*)$/m)
+          const skillName =
+            pattern === '_root'
+              ? (nameMatch?.[1]?.trim() || name)
+              : path.basename(path.dirname(match))
+          // For non-`_root` patterns the directory basename is structurally
+          // safe (no separators by construction). The `_root` case takes
+          // its name from the root SKILL.md frontmatter, which is read off
+          // disk and could be `..`/`/etc/passwd`/etc — validate it the
+          // same way `sync.skills` validates inline names. This vector is
+          // reachable in normal use because the shipped CLI defaults to
+          // `include: ['_root']` (`src/bin.ts`), so an attacker who can
+          // control the root SKILL.md (e.g. via a compromised dependency)
+          // would otherwise drop a SKILL.md outside `tmpDir` and the
+          // `finally` cleanup wouldn't reach it.
+          if (pattern === '_root' && nameMatch?.[1] != null)
+            assertSafeSkillName(
+              skillName,
+              'sync.include _root: invalid SKILL.md frontmatter `name:`',
+            )
+          const dest = path.join(tmpDir, skillName, 'SKILL.md')
+          // Defense in depth: refuse any write whose resolved path is not
+          // strictly inside `tmpDir`, so a future regression in the name
+          // validator above can never silently land a file outside the
+          // cleanup boundary.
+          const destResolved = path.resolve(dest)
+          if (!destResolved.startsWith(tmpDirResolved + path.sep))
+            throw new Error(
+              `sync.include: skill name ${JSON.stringify(skillName)} escapes tmp dir`,
+            )
+          try {
             await fs.mkdir(path.dirname(dest), { recursive: true })
             await fs.writeFile(dest, content)
             if (!skills.some((s) => s.name === skillName)) {
-              const descMatch = content.match(/^description:\s*(.+)$/m)
-              skills.push({ name: skillName, description: descMatch?.[1], external: true })
+              const descMatch = content.match(/^description:[^\S\n]*(.*)$/m)
+              skills.push({ name: skillName, description: descMatch?.[1]?.trim(), external: true })
             }
           } catch {}
         }
@@ -100,7 +182,6 @@ export async function sync(
     // finds nothing and inline takes over. Using "skip-if-exists" instead
     // of "overwrite" keeps dev-mode edits authoritative.
     if (options.skills) {
-      const tmpDirResolved = path.resolve(tmpDir)
       for (const skill of options.skills) {
         // Reject names that could escape `tmpDir` via path traversal *before*
         // touching the filesystem. The downstream `Agents.install()` discovery
@@ -157,21 +238,19 @@ export async function sync(
       }
     }
 
-    // Write skills hash + names for staleness detection. Inline entries that
-    // are shadowed by a command-derived skill of the same name don't
-    // contribute to the hash, so changing a shadowed baked body doesn't
-    // produce a false "Skills are out of date" prompt. The read side in
-    // `Cli.serve` mirrors this exact filter so the two hashes always agree.
-    //
-    // Inline entries shadowed by an `include` glob are still hashed: the
-    // read side cannot expand globs without doing a filesystem walk on every
-    // CLI invocation. The residual false positive only fires in dev mode
-    // (where `include` matches the live source tree); compiled binaries
-    // never see it because their `include` finds nothing at runtime.
+    // Write skills hash + names for staleness detection. Inline entries are
+    // filtered against the union of (command-derived skill names ∪ include
+    // glob skill names) before hashing, so changing a baked inline body
+    // whose name is shadowed by either source doesn't produce a false
+    // "Skills are out of date" prompt — that body would never be installed
+    // anyway. The staleness check in `Cli.serve` re-runs the same filter
+    // (including the include glob walk via `expandIncludeNames`) so both
+    // hashes always agree.
     const hashEntries = collectEntries(commands, [])
     const generatedNames = Skill.generatedNames(name, hashEntries, depth)
-    const inlineForHash =
-      options.skills?.filter((s) => !generatedNames.has(s.name)) ?? undefined
+    const includeShadowed = await expandIncludeNames(name, options.include, cwd)
+    const shadowed = new Set<string>([...generatedNames, ...includeShadowed])
+    const inlineForHash = options.skills?.filter((s) => !shadowed.has(s.name)) ?? undefined
     writeMeta(name, Skill.hash(hashEntries, inlineForHash), [...currentNames])
 
     return { skills, paths, agents }
@@ -269,6 +348,16 @@ function collectEntries(
     }
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * Resolves the include-glob root the same way `SyncSkills.sync()` does at
+ * write time. Used by the staleness check in `Cli.serve` so the read side
+ * walks the same directory as the install side.
+ */
+export function resolveIncludeCwd(options: { cwd?: string | undefined; global?: boolean | undefined } = {}): string {
+  const global = options.global !== false
+  return options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
 }
 
 /** Resolves the package root from the executing bin script (`process.argv[1]`). Walks up from the bin's directory looking for `package.json`. Falls back to `process.cwd()`. */
