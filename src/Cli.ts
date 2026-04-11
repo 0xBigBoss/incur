@@ -3193,8 +3193,15 @@ export type CommandDefinition<
 > = CommandMeta<options> & {
   /** Zod schema for positional arguments. */
   args?: args | undefined
-  /** Zod schema for the request body (used by generated commands). */
-  body?: z.ZodObject<any> | undefined
+  /**
+   * Zod schema for the request body (used by generated commands).
+   * Typically an object schema — fields are flattened into individual
+   * `--<prop>` option flags for ergonomics. Array and primitive body
+   * schemas are also supported for OpenAPI endpoints that declare
+   * non-object request bodies; those flow through `--json` or the
+   * `--body` JSON escape hatch exposed by the handler.
+   */
+  body?: z.ZodType | undefined
   /** Whether this command is destructive (e.g. DELETE). Agents are warned before execution. */
   destructive?: boolean | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */

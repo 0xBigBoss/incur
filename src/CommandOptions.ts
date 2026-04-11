@@ -3,7 +3,14 @@ import { z } from 'zod'
 import { ValidationError } from './Errors.js'
 
 type CommandOptionsSource = {
-  body?: z.ZodObject<any> | undefined
+  /**
+   * Request body schema. Most callers use an object schema (the fields
+   * get flattened into individual option flags), but OpenAPI endpoints
+   * with array or primitive request bodies declare the non-object Zod
+   * type directly here. The `--json` injection and handler resolution
+   * logic both branch on whether the parsed payload is plain-object.
+   */
+  body?: z.ZodType | undefined
   input?: z.ZodObject<any> | undefined
   mutates?: boolean | undefined
   options?: z.ZodObject<any> | undefined
@@ -79,6 +86,32 @@ export function resolveCommandOptions(
         },
       ],
     })
+  }
+
+  // Non-object payloads (arrays, primitives) can't be spread into
+  // `options`. Route them to `options.body` as the raw JSON string so
+  // the OpenAPI handler's `--body` escape hatch picks them up, and
+  // still validate against the declared schema so the user gets a
+  // useful error on malformed input. The existing object-spread path
+  // below keeps the ergonomic flattening for object bodies.
+  const isPlainObject = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+  if (!isPlainObject) {
+    try {
+      payloadSchema.parse(payload)
+    } catch (error: any) {
+      const issues: any[] = error?.issues ?? error?.error?.issues ?? []
+      throw new ValidationError({
+        message: issues.map((issue) => issue.message).join('; ') || 'Invalid --json payload',
+        fieldErrors: issues.map((issue) => ({
+          path: ['json', ...(issue.path ?? [])].join('.'),
+          expected: issue.expected ?? '',
+          received: issue.received ?? '',
+          message: issue.message ?? '',
+        })),
+        cause: error instanceof Error ? error : undefined,
+      })
+    }
+    return { control, options: { ...options, body: control.json } }
   }
 
   let parsedPayload: Record<string, unknown>

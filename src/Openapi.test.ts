@@ -106,6 +106,121 @@ describe('generateCommands', () => {
     expect(result).toEqual({ received: ['alpha', 'beta', 'gamma'] })
   })
 
+  test('Swagger 2 required non-object body rejects empty invocations at handler time', async () => {
+    // Issue 4 regression: `bodyRequiredTopLevel` used to only check
+    // `op.requestBody?.required` (OpenAPI 3 shape), so a Swagger 2
+    // endpoint declaring `in: body, required: true, schema: { type:
+    // 'array' }` silently fell through and the command accepted an
+    // empty invocation, calling the server with no payload. Fix: union
+    // the Swagger 2 body parameter's own `required` field into the
+    // requiredness check, and enforce at handler time (not schema
+    // time, because that would block the `--json` full-payload path).
+    let fetchCalled = false
+    const fetch = async (_req: Request) => {
+      fetchCalled = true
+      return new Response('{}', { headers: { 'content-type': 'application/json' } })
+    }
+    const swagger2Spec = {
+      swagger: '2.0',
+      info: { title: 'Legacy', version: '1.0.0' },
+      paths: {
+        '/bulk': {
+          post: {
+            operationId: 'bulk',
+            parameters: [
+              {
+                name: 'items',
+                in: 'body',
+                required: true,
+                schema: { type: 'array', items: { type: 'string' } },
+              },
+            ],
+            responses: { '200': { description: 'ok', schema: {} } },
+          },
+        },
+      },
+    } as const
+    const commands = await Openapi.generateCommands(swagger2Spec as any, fetch)
+    const bulk = commands.get('bulk')!
+    expect(bulk).toBeDefined()
+    // Empty invocation: handler returns a VALIDATION_ERROR and never
+    // calls the server.
+    const errorResult = await bulk.run({
+      args: {},
+      options: {},
+      error: (e: any) => e,
+      ok: (d: any) => d,
+    })
+    expect(errorResult).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('request body is required'),
+    })
+    expect(fetchCalled).toBe(false)
+    // Valid `--body` string is accepted and actually hits the server.
+    await bulk.run({
+      args: {},
+      options: { body: '["alpha","beta"]' },
+      error: (e: any) => e,
+      ok: (d: any) => d,
+    })
+    expect(fetchCalled).toBe(true)
+  })
+
+  test('--json payload routes array bodies to options.body for OpenAPI handlers', async () => {
+    // Issue 5 regression: `--json` is the framework's documented way
+    // to pass the full body payload in one flag, but
+    // `resolveCommandOptions` used to always `{ ...options,
+    // ...parsedPayload }` — which silently drops array and primitive
+    // payloads (spreading an array into an object produces numeric
+    // keys). The OpenAPI handler only looks at `options.body` and
+    // flattened props, so `--json '["a","b"]'` for an array body
+    // sent nothing at all. Fix: detect non-object payloads in
+    // `resolveCommandOptions` and route them to `options.body` as the
+    // raw JSON string, preserving the existing object-spread path.
+    let capturedBody: string | undefined
+    const fetch = async (req: Request) => {
+      capturedBody = await req.text()
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const arraySpec = {
+      openapi: '3.0.0',
+      info: { title: 'Bulk', version: '1.0.0' },
+      paths: {
+        '/bulk': {
+          post: {
+            operationId: 'bulkJson',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+            responses: { '200': { description: 'ok', content: { 'application/json': { schema: {} } } } },
+          },
+        },
+      },
+    } as const
+    const cli = Cli.create('bulk-cli').command('api', {
+      fetch,
+      openapi: arraySpec as any,
+    })
+    const { output, exitCode } = await serve(cli, [
+      'api',
+      'bulkJson',
+      '--json',
+      '["alpha","beta","gamma"]',
+      '--format',
+      'json',
+    ])
+    expect(exitCode).toBeUndefined()
+    expect(capturedBody).toBe('["alpha","beta","gamma"]')
+    expect(json(output)).toEqual({ ok: true })
+  })
+
   test('object request body still accepts flattened --<prop> options', async () => {
     // Regression guard: the Issue 1 fix added a `--body` escape hatch but must
     // not break the existing flattened-property convenience for object bodies.

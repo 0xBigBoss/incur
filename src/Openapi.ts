@@ -35,7 +35,15 @@ type FetchHandler = (req: Request) => Response | Promise<Response>
 /** A generated command entry compatible with incur's internal CommandEntry. */
 type GeneratedCommand = {
   args?: z.ZodObject<any> | undefined
-  body?: z.ZodObject<any> | undefined
+  /**
+   * Request body schema. Object-shaped bodies get their properties
+   * flattened into `--<prop>` option flags; array and primitive bodies
+   * are accepted via the injected `--json` payload or the explicit
+   * `--body` JSON escape hatch. Widened from `z.ZodObject<any>` so
+   * non-object schemas can participate in the `--json` injection path
+   * without silent data loss.
+   */
+  body?: z.ZodType | undefined
   description?: string | undefined
   destructive?: boolean | undefined
   mutates?: boolean | undefined
@@ -85,7 +93,15 @@ export async function generateCommands(
         ? new Set(((bodySchema as any).required as string[] | undefined) ?? [])
         : new Set<string>()
       const hasBodySchema = !!bodySchema
-      const bodyRequiredTopLevel = op.requestBody?.required === true
+      // Requiredness for top-level non-object bodies (arrays, primitives).
+      // OpenAPI 3 uses `requestBody.required`; Swagger 2 uses the body
+      // parameter's own `required` field. Both need to be honored,
+      // otherwise a Swagger 2 endpoint with `in: body, required: true,
+      // schema: { type: 'array' }` would accept `generateCommands(...)
+      // .get('bulk').options.safeParse({}).success === true` and call
+      // the server without any payload.
+      const bodyRequiredTopLevel =
+        op.requestBody?.required === true || swagger2BodyParam?.required === true
       const responseSchema = getResponseSchema(op.responses)
 
       // Build args Zod schema from path params
@@ -118,19 +134,29 @@ export async function generateCommands(
       // primitives) and for object bodies where the caller wants to send
       // extra fields not enumerated by the schema. Expressed as a JSON
       // string so it round-trips cleanly via argv.
+      //
+      // `--body` is always OPTIONAL in the schema even when the body is
+      // required. Parser validation runs before `resolveCommandOptions`,
+      // which is where the `--json` full-payload flag gets routed into
+      // `options.body` — making `body` required at schema time would
+      // reject the `--json` path with a spurious "body missing" error.
+      // Requiredness is enforced in the handler below, which sees the
+      // final merged options.
       if (hasBodySchema) {
-        const bodyOption = z
+        optShape.body = z
           .string()
+          .optional()
           .describe('Raw JSON request body. Overrides any flattened --<prop> options.')
-        // Only require the flag when the endpoint has a required
-        // non-object body and no flattened props to fall back on.
-        optShape.body = bodyRequiredTopLevel && !bodyIsObject ? bodyOption : bodyOption.optional()
       }
       const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined
+      // The full request body schema (object, array, or primitive) is
+      // exposed on `command.body` so the framework injects a `--json`
+      // payload option. For object bodies this works exactly like
+      // before. For non-object bodies, `resolveCommandOptions()` routes
+      // the parsed JSON to `options.body` (rather than spreading), and
+      // the handler below picks it up.
       const bodyZod =
-        bodySchema && typeof bodySchema === 'object'
-          ? (toZod(bodySchema) as z.ZodObject<any>)
-          : undefined
+        bodySchema && typeof bodySchema === 'object' ? toZod(bodySchema) : undefined
       const outputSchema =
         responseSchema && typeof responseSchema === 'object' ? toZod(responseSchema) : undefined
 
@@ -174,6 +200,8 @@ export async function generateCommands(
           pathParams,
           queryParams,
           bodyProps,
+          bodyRequired: bodyRequiredTopLevel,
+          operationId: name,
         }),
       })
     }
@@ -185,8 +213,11 @@ export async function generateCommands(
 function createHandler(config: {
   basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
+  /** True when the OpenAPI spec declares the request body as required. */
+  bodyRequired: boolean
   fetch: FetchHandler
   httpMethod: string
+  operationId: string
   path: string
   pathParams: Parameter[]
   queryParams: Parameter[]
@@ -224,6 +255,17 @@ function createHandler(config: {
         if (Object.keys(bodyObj).length > 0) body = JSON.stringify(bodyObj)
       }
     }
+
+    // Enforce requiredness AFTER merging `--body` / `--json` / flattened
+    // props. `--body` is optional at schema time (see generator
+    // comment) so Parser validation can't catch a missing required body
+    // without also rejecting the `--json` full-payload path. This is
+    // the single post-merge gate that covers all three input channels.
+    if (!body && config.bodyRequired)
+      return context.error({
+        code: 'VALIDATION_ERROR',
+        message: `${config.operationId}: request body is required — pass --body <json> or --json <json>`,
+      })
 
     const input: Fetch.FetchInput = {
       path: urlPath,
