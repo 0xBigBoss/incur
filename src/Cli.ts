@@ -687,7 +687,15 @@ async function serveImpl(
           | ReadonlyArray<{ name: string; content: string }>
           | undefined
         if (inlineForHash?.length) {
-          const cwd = SyncSkills.resolveIncludeCwd({ cwd: options.sync?.cwd })
+          // Prefer the cwd that was persisted at the last sync — the write
+          // side could have anchored to `process.cwd()` (for `skills add
+          // --no-global`) or `resolvePackageRoot()` (default global mode),
+          // and the read side has no other way to tell which mode the user
+          // picked. Fall back to the default resolver if no metadata exists
+          // (first run, or hash file cleared).
+          const cwd =
+            SyncSkills.readIncludeCwd(name) ??
+            SyncSkills.resolveIncludeCwd({ cwd: options.sync?.cwd })
           const includeShadowed = await SyncSkills.expandIncludeNames(
             name,
             options.sync?.include,

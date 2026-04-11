@@ -251,7 +251,7 @@ export async function sync(
     const includeShadowed = await expandIncludeNames(name, options.include, cwd)
     const shadowed = new Set<string>([...generatedNames, ...includeShadowed])
     const inlineForHash = options.skills?.filter((s) => !shadowed.has(s.name)) ?? undefined
-    writeMeta(name, Skill.hash(hashEntries, inlineForHash), [...currentNames])
+    writeMeta(name, Skill.hash(hashEntries, inlineForHash), [...currentNames], cwd)
 
     return { skills, paths, agents }
   } finally {
@@ -393,15 +393,20 @@ function hashPath(name: string): string {
 }
 
 /** @internal Writes the skills metadata for staleness detection and cleanup. */
-function writeMeta(name: string, hash: string, skills: string[]) {
+function writeMeta(name: string, hash: string, skills: string[], includeCwd: string) {
   const file = hashPath(name)
   const dir = path.dirname(file)
   if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true })
-  fsSync.writeFileSync(file, JSON.stringify({ hash, skills, at: new Date().toISOString() }) + '\n')
+  fsSync.writeFileSync(
+    file,
+    JSON.stringify({ hash, skills, includeCwd, at: new Date().toISOString() }) + '\n',
+  )
 }
 
 /** @internal Reads the stored metadata for a CLI. */
-function readMeta(name: string): { hash: string; skills?: string[] } | undefined {
+function readMeta(
+  name: string,
+): { hash: string; skills?: string[]; includeCwd?: string } | undefined {
   try {
     return JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'))
   } catch {
@@ -412,6 +417,19 @@ function readMeta(name: string): { hash: string; skills?: string[] } | undefined
 /** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
 export function readHash(name: string): string | undefined {
   return readMeta(name)?.hash
+}
+
+/**
+ * Reads the cwd that was used to expand `include` globs at the last sync.
+ * The staleness check uses this so it walks the same directory as the
+ * install path did — a `skills add --no-global` sync anchors to
+ * `process.cwd()` at sync time, while the default global sync anchors to
+ * `resolvePackageRoot()`, and the read site cannot tell which mode the
+ * user picked without this hint. Returns `undefined` if no metadata
+ * exists; callers should fall back to `resolveIncludeCwd()` in that case.
+ */
+export function readIncludeCwd(name: string): string | undefined {
+  return readMeta(name)?.includeCwd
 }
 
 function resolveContextPath(options: { cwd: string; global: boolean }): string {

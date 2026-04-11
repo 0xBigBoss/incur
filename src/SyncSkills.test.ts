@@ -402,6 +402,55 @@ shadowed body v2 with way more content than v1
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('skills add --no-global persists includeCwd so staleness check walks the same tree', async () => {
+  // Issue 7 regression: when a user runs `skills add --no-global` from
+  // their project directory, the write site anchors include globs to
+  // `process.cwd()` (via `global: false`) — but the read side in
+  // `Cli.serve` has no hint about which mode was used and used to fall
+  // back to `resolvePackageRoot()`, which can point at a completely
+  // different tree. A user who synced locally and relied on
+  // `sync.include` to shadow an inline skill would then see a false
+  // "Skills are out of date" prompt on the next CLI invocation because
+  // the read side walks the wrong directory.
+  //
+  // Fix: persist the effective cwd in metadata (`meta.includeCwd`) and
+  // have the read site prefer it over any live resolver. This test
+  // verifies both the persistence and that the persisted value matches
+  // the cwd the write site actually used for the glob walk.
+  const tmp = join(tmpdir(), `clac-no-global-cwd-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('localtool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Stage an include-shadowed skill only reachable via the project-local
+  // tree — NOT the resolved package root.
+  const skillDir = join(installDir, 'skills', 'shared')
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(
+    join(skillDir, 'SKILL.md'),
+    '---\nname: shared\ndescription: live\n---\nlive body\n',
+  )
+
+  await SyncSkills.sync('localtool', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['skills/*'],
+    skills: [{ name: 'shared', content: '---\nname: shared\n---\nbaked v1\n' }],
+  })
+
+  // Metadata preserves the cwd the write site used for include expansion,
+  // so the read site can walk the exact same tree regardless of where the
+  // user invokes the CLI from.
+  expect(SyncSkills.readIncludeCwd('localtool')).toBe(installDir)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('expandIncludeNames returns the same shadow set the install path uses', async () => {
   // Direct test of the helper used by both the write site and the
   // staleness check read site. If both sites compute the same set, their
