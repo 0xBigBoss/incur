@@ -674,7 +674,9 @@ async function serveImpl(
       if (stored) {
         const groups = new Map<string, string>()
         const entries = collectSkillCommands(commands, [], groups)
-        if (Skill.hash(entries) !== stored) {
+        // Pass `sync.skills` so a compiled binary that bakes new inline skill
+        // bodies but leaves commands untouched still tips the staleness check.
+        if (Skill.hash(entries, options.sync?.skills) !== stored) {
           const runner = detectRunner()
           const spec = SyncMcp.detectPackageSpecifier(name)
           skillsCta = {

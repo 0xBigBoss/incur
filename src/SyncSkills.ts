@@ -81,9 +81,33 @@ export async function sync(
     // finds nothing and inline takes over. Using "skip-if-exists" instead
     // of "overwrite" keeps dev-mode edits authoritative.
     if (options.skills) {
+      const tmpDirResolved = path.resolve(tmpDir)
       for (const skill of options.skills) {
+        // Reject names that could escape `tmpDir` via path traversal *before*
+        // touching the filesystem. The downstream `Agents.install()` discovery
+        // pass also runs `sanitizeName()`, but only after these writes have
+        // already landed — by then a malicious `../foo` payload would have
+        // dropped a SKILL.md outside the temp tree, and the `finally` cleanup
+        // (which only `rm`s `tmpDir`) would not remove it. Fail loud here
+        // instead of silently rewriting, since a path-shaped `name` always
+        // indicates a caller bug, not a legitimate use case.
+        if (
+          !skill.name ||
+          skill.name.includes('/') ||
+          skill.name.includes('\\') ||
+          skill.name.includes('\0') ||
+          skill.name === '.' ||
+          skill.name === '..'
+        )
+          throw new Error(`sync.skills: invalid skill name ${JSON.stringify(skill.name)}`)
         if (skills.some((s) => s.name === skill.name)) continue
         const dest = path.join(tmpDir, skill.name, 'SKILL.md')
+        // Defense in depth: even if the regex above misses some platform
+        // quirk, refuse to write if the resolved destination is not strictly
+        // inside `tmpDir`.
+        const destResolved = path.resolve(dest)
+        if (!destResolved.startsWith(tmpDirResolved + path.sep))
+          throw new Error(`sync.skills: skill name ${JSON.stringify(skill.name)} escapes tmp dir`)
         await fs.mkdir(path.dirname(dest), { recursive: true })
         await fs.writeFile(dest, skill.content)
         const descMatch = skill.content.match(/^description:\s*(.+)$/m)
@@ -103,9 +127,12 @@ export async function sync(
       }
     }
 
-    // Write skills hash + names for staleness detection
+    // Write skills hash + names for staleness detection. Inline `options.skills`
+    // is folded into the hash so a rebuilt compiled binary with updated baked
+    // SKILL.md bodies (but unchanged commands) still trips the out-of-date
+    // check on the next `serve` call.
     const hashEntries = collectEntries(commands, [])
-    writeMeta(name, Skill.hash(hashEntries), [...currentNames])
+    writeMeta(name, Skill.hash(hashEntries, options.skills), [...currentNames])
 
     return { skills, paths, agents }
   } finally {

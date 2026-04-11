@@ -201,6 +201,102 @@ description: Stale baked content.
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync.skills rejects path-traversal names instead of writing outside tmpDir', async () => {
+  // The downstream `Agents.install()` discovery loop sanitizes skill names,
+  // but only after files have already been written to disk. An unsanitized
+  // `..` segment in `skill.name` would land a SKILL.md outside `tmpDir` —
+  // outside the cleanup `finally`. Reject these inputs at the inline write
+  // site, before any `fs.writeFile` runs.
+  const tmp = join(tmpdir(), `clac-inline-traversal-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('traversal-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const body = `---
+name: bad
+description: never written
+---
+`
+  const evilNames = ['../escape', 'foo/bar', 'foo\\bar', '..', '.', '']
+  for (const name of evilNames) {
+    await expect(
+      SyncSkills.sync('traversal-tool', commands, {
+        global: false,
+        cwd: installDir,
+        skills: [{ name, content: body }],
+      }),
+    ).rejects.toThrow(/sync\.skills: invalid skill name/)
+  }
+
+  // None of the rejected names landed a stray file in the install dir's parent
+  // (a sibling of `.agents`), proving the early throw fired before any write.
+  expect(existsSync(join(installDir, 'escape'))).toBe(false)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
+test('staleness hash changes when inline sync.skills content changes', async () => {
+  // Regression: a compiled binary that re-bakes a SKILL.md body but leaves
+  // commands untouched must still trip the out-of-date check, otherwise
+  // users keep stale installed skills on disk forever after upgrading.
+  const tmp = join(tmpdir(), `clac-inline-stale-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+  process.env.XDG_DATA_HOME = tmp
+
+  const cli = Cli.create('stale-tool')
+  cli.command('ping', { description: 'Health check', run: () => ({}) })
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const v1 = `---
+name: baked
+description: v1
+---
+v1 body
+`
+  await SyncSkills.sync('stale-tool', commands, {
+    global: false,
+    cwd: installDir,
+    skills: [{ name: 'baked', content: v1 }],
+  })
+  const hash1 = SyncSkills.readHash('stale-tool')
+
+  const v2 = `---
+name: baked
+description: v2
+---
+v2 body
+`
+  await SyncSkills.sync('stale-tool', commands, {
+    global: false,
+    cwd: installDir,
+    skills: [{ name: 'baked', content: v2 }],
+  })
+  const hash2 = SyncSkills.readHash('stale-tool')
+
+  expect(hash1).toBeDefined()
+  expect(hash2).toBeDefined()
+  expect(hash1).not.toBe(hash2)
+
+  // And: a hash written WITHOUT inline skills must NOT collide with one
+  // written with inline content, even when commands are identical. This
+  // protects users who add/remove `sync.skills` between releases.
+  await SyncSkills.sync('stale-tool', commands, {
+    global: false,
+    cwd: installDir,
+  })
+  const hashNoInline = SyncSkills.readHash('stale-tool')
+  expect(hashNoInline).not.toBe(hash2)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('installed SKILL.md contains frontmatter', async () => {
   const tmp = join(tmpdir(), `clac-content-test-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })

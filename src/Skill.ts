@@ -255,8 +255,19 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
   return sections.join('\n\n')
 }
 
-/** Computes a deterministic hash of command structure for staleness detection. */
-export function hash(commands: CommandInfo[]): string {
+/**
+ * Computes a deterministic hash of command structure for staleness detection.
+ *
+ * The optional `extras` argument folds in build-time-baked SKILL.md bodies
+ * (see `SyncSkills.sync` `skills?` option), so a compiled binary that ships
+ * updated inline skill content but unchanged commands still trips the
+ * out-of-date check inside `Cli.serve`. Sorted by name to keep the hash
+ * order-stable across calls.
+ */
+export function hash(
+  commands: CommandInfo[],
+  extras?: ReadonlyArray<{ name: string; content: string }> | undefined,
+): string {
   const data = commands.map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
@@ -265,7 +276,15 @@ export function hash(commands: CommandInfo[]): string {
     options: cmd.options ? Schema.toJsonSchema(cmd.options) : undefined,
     output: cmd.output ? Schema.toJsonSchema(cmd.output) : undefined,
   }))
-  return createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
+  const extrasData = extras?.length
+    ? [...extras]
+        .map((s) => ({ name: s.name, content: s.content }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : undefined
+  return createHash('sha256')
+    .update(JSON.stringify(extrasData ? { commands: data, extras: extrasData } : data))
+    .digest('hex')
+    .slice(0, 16)
 }
 
 /** @internal Renders a JSON Schema object as a Markdown table. Returns `undefined` for non-object schemas. */
