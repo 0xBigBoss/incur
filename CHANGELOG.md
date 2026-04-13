@@ -1,5 +1,17 @@
 # incur
 
+## 0.4.4
+
+### Patch Changes
+
+- 888f3e0: fix: dry-run envelope redacts env, auto-derive mutates from dryRun option, kebab-case in skill tables
+
+## 0.4.3
+
+### Patch Changes
+
+- Fix the published assets
+
 ## 0.4.2
 
 ### Patch Changes
