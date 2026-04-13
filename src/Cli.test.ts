@@ -36,9 +36,15 @@ async function serve(
   options: Cli.serve.Options = {},
 ) {
   let output = ''
+  let errors = ''
   let exitCode: number | undefined
   await cli.serve(argv, {
     stdout(s) {
+      output += s
+    },
+    stderr(s) {
+      errors += s
+      // Merge into output so existing assertions continue to work.
       output += s
     },
     exit(code) {
@@ -48,6 +54,7 @@ async function serve(
   })
   return {
     output: output.replace(/duration: \d+ms/, 'duration: <stripped>'),
+    errors: errors.replace(/duration: \d+ms/, 'duration: <stripped>'),
     exitCode,
   }
 }
@@ -630,6 +637,32 @@ describe('config defaults', () => {
 })
 
 describe('serve', () => {
+  test('error output goes to stderr, not stdout (eval-safe)', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+
+    // Success: stdout has data, stderr is empty
+    const ok = await serve(cli, ['greet', 'world'])
+    expect(ok.errors).toBe('')
+    expect(ok.output).toContain('hello world')
+
+    // Error (bad command): stdout is empty, stderr has the error
+    let stdoutOnly = ''
+    let stderrOnly = ''
+    await cli.serve(['nonexistent'], {
+      stdout(s) { stdoutOnly += s },
+      stderr(s) { stderrOnly += s },
+      exit() {},
+    })
+    expect(stdoutOnly).toBe('')
+    expect(stderrOnly).toContain('COMMAND_NOT_FOUND')
+  })
+
   test('outputs data only by default', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {

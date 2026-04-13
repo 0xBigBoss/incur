@@ -1,5 +1,20 @@
 # incur
 
+## 0.4.1
+
+### Patch Changes
+
+- Route error output to stderr for eval-safe shell patterns
+
+  All non-ok output (errors, COMMAND_NOT_FOUND, validation failures, MCP
+  startup errors, streaming errors) now writes to stderr instead of stdout.
+  This makes shell patterns like `eval "$(cli cmd 2>/dev/null)"` safe —
+  error envelopes no longer pollute the stdout stream that `eval` consumes.
+
+  Added `stderr` option to `serve.Options` alongside the existing `stdout`
+  override, defaulting to `process.stderr.write`. Success output (command
+  results, help, version, completions, schema, LLMs) remains on stdout.
+
 ## 0.4.0
 
 ### Minor Changes

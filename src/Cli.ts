@@ -302,12 +302,12 @@ export function create(
           const code = err instanceof IncurError ? err.code : 'PLUGIN_RESOLUTION_FAILED'
           // Use shortMessage to avoid the "Details: ..." suffix that BaseError appends.
           const message = err instanceof IncurError ? err.shortMessage : (err instanceof Error ? err.message : String(err))
-          const stdout = serveOptions.stdout ?? ((s: string) => process.stdout.write(s))
+          const stderrFn = serveOptions.stderr ?? ((s: string) => process.stderr.write(s))
           const exit = serveOptions.exit ?? ((code: number) => process.exit(code))
           const { format: formatFlag, formatExplicit } = extractBuiltinFlags(argv)
           const format = formatExplicit ? formatFlag : 'toon'
           const output = Formatter.format({ code, message }, format)
-          stdout(output.endsWith('\n') ? output : `${output}\n`)
+          stderrFn(output.endsWith('\n') ? output : `${output}\n`)
           exit(1)
           return
         }
@@ -545,6 +545,8 @@ export declare namespace serve {
     exit?: ((code: number) => void) | undefined
     /** Override stdout writer. Defaults to `process.stdout.write`. */
     stdout?: ((s: string) => void) | undefined
+    /** Override stderr writer. Defaults to `process.stderr.write`. */
+    stderr?: ((s: string) => void) | undefined
   }
 }
 
@@ -557,6 +559,7 @@ async function serveImpl(
   options: serveImpl.Options = {},
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
+  const stderr = options.stderr ?? ((s: string) => process.stderr.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
   const human = process.stdout.isTTY === true
   const configEnabled = options.config !== undefined
@@ -567,13 +570,19 @@ async function serveImpl(
     stdout(s.endsWith('\n') ? s : `${s}\n`)
   }
 
+  // Error output goes to stderr so shell patterns like
+  // `eval "$(cli cmd 2>/dev/null)"` stay safe when a command fails.
+  function writelnErr(s: string) {
+    stderr(s.endsWith('\n') ? s : `${s}\n`)
+  }
+
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
   try {
     builtinFlags = extractBuiltinFlags(argv, { configFlag })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
-    else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+    if (human) writelnErr(formatHumanError({ code: 'UNKNOWN', message }))
+    else writelnErr(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
     exit(1)
     return
   }
@@ -618,7 +627,7 @@ async function serveImpl(
     } catch (err) {
       const code = err instanceof IncurError ? err.code : 'UNKNOWN'
       const message = err instanceof Error ? err.message : String(err)
-      writeln(Formatter.format({ code, message }, formatExplicit ? formatFlag : 'toon'))
+      writelnErr(Formatter.format({ code, message }, formatExplicit ? formatFlag : 'toon'))
       exit(1)
     }
     return
@@ -822,9 +831,9 @@ async function serveImpl(
         commands: ctaCommands,
       }
       if (human) {
-        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-        writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+        writelnErr(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writelnErr(formatHumanCta(cta))
+      } else writelnErr(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
       exit(1)
       return
     }
@@ -917,9 +926,9 @@ async function serveImpl(
         commands: ctaCommands,
       }
       if (human) {
-        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-        writeln(formatHumanCta(cta))
-      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+        writelnErr(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writelnErr(formatHumanCta(cta))
+      } else writelnErr(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
       exit(1)
       return
     }
@@ -1145,12 +1154,12 @@ async function serveImpl(
       const parent = resolved.path ? `${name} ${resolved.path}` : name
       const suggestion = suggest(resolved.error, resolved.commands.keys())
       const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
-      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`)
+      writelnErr(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`)
       exit(1)
       return
     }
     if ('fetchGateway' in resolved) {
-      writeln('--schema is not supported for fetch commands.')
+      writelnErr('--schema is not supported for fetch commands.')
       exit(1)
       return
     }
@@ -1279,18 +1288,20 @@ async function serveImpl(
         },
       }
     }
+    // Route non-ok output through stderr so `eval "$(cli cmd 2>/dev/null)"` stays safe.
+    const writelnOut = output.ok ? writeln : writelnErr
     if (tokenCount) {
       const base = output.ok ? output.data : output.error
       const formatted = base != null ? Formatter.format(base, format) : ''
-      return writeln(String(estimateTokenCount(formatted)))
+      return writelnOut(String(estimateTokenCount(formatted)))
     }
     const cta = output.meta.cta
     if (human && !verbose) {
       if (output.ok && output.data != null && renderOutput) {
         const t = truncate(Formatter.format(output.data, format))
         writeln(t.text)
-      } else if (!output.ok) writeln(formatHumanError(output.error))
-      if (cta) writeln(formatHumanCta(cta))
+      } else if (!output.ok) writelnErr(formatHumanError(output.error))
+      if (cta) writelnOut(formatHumanCta(cta))
       return
     }
     if (verbose) {
@@ -1310,20 +1321,20 @@ async function serveImpl(
           const meta: Record<string, unknown> = { ...output.meta }
           if (t.nextOffset != null) meta.nextOffset = t.nextOffset
           envelope.meta = meta
-          return writeln(Formatter.format(envelope, format))
+          return writelnOut(Formatter.format(envelope, format))
         }
       }
-      return writeln(Formatter.format(output, format))
+      return writelnOut(Formatter.format(output, format))
     }
     const base = output.ok ? output.data : output.error
     const formatted = Formatter.format(base, format)
     if (!cta) {
-      if (formatted) writeln(truncate(formatted).text)
+      if (formatted) writelnOut(truncate(formatted).text)
       return
     }
     const payload =
       typeof base === 'object' && base !== null ? { ...base, cta } : { data: base, cta }
-    writeln(truncate(Formatter.format(payload, format)).text)
+    writelnOut(truncate(Formatter.format(payload, format)).text)
   }
 
   if ('error' in effective) {
@@ -1345,11 +1356,11 @@ async function serveImpl(
       commands: ctaCommands,
     }
     if (human && !verbose) {
-      writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+      writelnErr(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
       const mergedCta = skillsCta
         ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
         : cta
-      writeln(formatHumanCta(mergedCta))
+      writelnErr(formatHumanCta(mergedCta))
       exit(1)
       return
     }
@@ -1395,6 +1406,7 @@ async function serveImpl(
           truncate,
           write,
           writeln,
+          writelnErr,
           exit,
         })
         return
@@ -1581,6 +1593,7 @@ async function serveImpl(
       truncate,
       write,
       writeln,
+      writelnErr,
       exit,
     })
     return
@@ -1622,7 +1635,7 @@ async function serveImpl(
     const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
 
     if (human && !formatExplicit && result.error.fieldErrors) {
-      writeln(
+      writelnErr(
         formatHumanValidationError(
           displayName,
           path,
@@ -2705,6 +2718,7 @@ async function handleStreaming(
     truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
     write: (output: Output) => void
     writeln: (s: string) => void
+    writelnErr: (s: string) => void
     exit: (code: number) => void
   },
 ) {
@@ -2727,7 +2741,7 @@ async function handleStreaming(
           const tagged = value as any
           if (tagged[sentinel] === 'error') {
             if (useJsonl)
-              ctx.writeln(
+              ctx.writelnErr(
                 JSON.stringify({
                   type: 'error',
                   ok: false,
@@ -2740,7 +2754,7 @@ async function handleStreaming(
                   },
                 }),
               )
-            else ctx.writeln(formatHumanError({ code: tagged.code, message: tagged.message }))
+            else ctx.writelnErr(formatHumanError({ code: tagged.code, message: tagged.message }))
             ctx.exit(tagged.exitCode ?? 1)
             return
           }
@@ -2754,7 +2768,7 @@ async function handleStreaming(
       if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
         const err = returnValue as ErrorResult
         if (useJsonl)
-          ctx.writeln(
+          ctx.writelnErr(
             JSON.stringify({
               type: 'error',
               ok: false,
@@ -2765,7 +2779,7 @@ async function handleStreaming(
               },
             }),
           )
-        else ctx.writeln(formatHumanError({ code: err.code, message: err.message }))
+        else ctx.writelnErr(formatHumanError({ code: err.code, message: err.message }))
         ctx.exit(err.exitCode ?? 1)
         return
       }
@@ -2790,7 +2804,7 @@ async function handleStreaming(
       else if (cta) ctx.writeln(formatHumanCta(cta))
     } catch (error) {
       if (useJsonl)
-        ctx.writeln(
+        ctx.writelnErr(
           JSON.stringify({
             type: 'error',
             ok: false,
@@ -2801,7 +2815,7 @@ async function handleStreaming(
           }),
         )
       else
-        ctx.writeln(
+        ctx.writelnErr(
           formatHumanError({
             code: 'UNKNOWN',
             message: error instanceof Error ? error.message : String(error),

@@ -147,6 +147,7 @@ async function resolveCommands(cli: Cli.Cli) {
   await cli.serve(['--llms', '--format', 'json'], {
     exit() {},
     stdout() {},
+    stderr() {},
   })
   return toCommands.get(cli)!
 }
@@ -556,6 +557,9 @@ describe('Mcp', () => {
       let cliOutput = ''
       await cli.serve(['users', 'get-user', 'u-1', '--format', 'json'], {
         stdout(s) {
+          cliOutput += s
+        },
+        stderr(s) {
           cliOutput += s
         },
         exit() {},

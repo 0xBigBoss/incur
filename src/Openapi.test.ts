@@ -18,6 +18,7 @@ function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
   return cli
     .serve(argv, {
       stdout: (s) => (output += s),
+      stderr: (s) => (output += s),
       exit: (c) => {
         exitCode = c
       },

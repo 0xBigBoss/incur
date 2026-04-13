@@ -99,6 +99,9 @@ async function serve(
     stdout(s) {
       output += s
     },
+    stderr(s) {
+      output += s
+    },
     exit(code) {
       exitCode = code
     },
@@ -111,6 +114,7 @@ async function resolveCommands(cli: Cli.Cli) {
   await cli.serve(['--llms', '--format', 'json'], {
     exit() {},
     stdout() {},
+    stderr() {},
   })
   return toCommands.get(cli)!
 }

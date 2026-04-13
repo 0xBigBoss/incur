@@ -21,6 +21,9 @@ async function serve(
     stdout(s) {
       output += s
     },
+    stderr(s) {
+      output += s
+    },
     exit(code) {
       exitCode = code
     },
