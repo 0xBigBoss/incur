@@ -5,3 +5,6 @@ clac.generated.ts
 tasks
 *.tsbuildinfo
 .npmrc
+.agents
+.continue
+CONTEXT.md
