@@ -1,5 +1,55 @@
 # incur
 
+## 0.4.0
+
+### Minor Changes
+
+- 658b03e: Add `sync.skills` option for inline SKILL.md content
+
+  `Cli.create({ sync: { skills: [{ name, content }] } })` now accepts
+  pre-resolved SKILL.md entries alongside the existing `include` globs.
+  This is the build-time escape hatch for CLIs compiled into single-file
+  executables (e.g. `bun build --compile`): the caller bakes the SKILL.md
+  body in via a text import and passes the string through, so
+  `skills add` can install it without needing the source tree at runtime.
+
+  Inline entries yield to same-name skills produced by the command
+  generator or by `include`, so dev-mode filesystem edits stay
+  authoritative.
+
+### Patch Changes
+
+- Harden SyncSkills inline path and fix pre-existing Openapi / pipeline bugs
+
+  SyncSkills (layered on top of the new `sync.skills` inline option):
+
+  - Sanitize inline skill `name` (enforce frontmatter-slug rules) and fold
+    it into the staleness hash so renames invalidate cached output.
+  - Close a frontmatter-name escape and eliminate shadow-noise in the
+    staleness hash so unrelated edits no longer invalidate cached skills.
+  - Validate `_root` include names and walk `include` globs when computing
+    staleness so dev-mode edits to glob-sourced skills are detected.
+  - Persist `includeCwd` so the staleness check walks the same tree that
+    `sync()` walked (previously the two could disagree after a cwd
+    change).
+
+  Openapi:
+
+  - Swagger 2 body requiredness: non-object top-level bodies
+    (array/primitive) now expose a `--body` JSON escape hatch instead of
+    being silently dropped, so bulk-insert style endpoints are invokable.
+    Object bodies keep the existing `--<prop>` flattening.
+  - Required per-prop flags no longer block the `--json` full-payload
+    path; `--json` bypasses per-prop requiredness so the full body can be
+    supplied in one shot.
+
+  Other pre-existing bugs surfaced by the cycle-6 review:
+
+  - `dryRun` short-circuit wiring, pipeline sanitization, and query
+    coercion edge cases fixed with regression coverage.
+  - `tsgo` build errors for exported types, `Meta.warnings`, and implicit
+    `any` resolved.
+
 ## 0.3.13
 
 ### Patch Changes
