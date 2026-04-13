@@ -308,8 +308,7 @@ test('sync.include _root rejects malicious frontmatter `name:`', async () => {
 
   // Drop a canary in a parent directory to detect any escape.
   const escapeTarget = join(installDir, '..', 'escape')
-  if (existsSync(escapeTarget))
-    rmSync(escapeTarget, { recursive: true, force: true })
+  if (existsSync(escapeTarget)) rmSync(escapeTarget, { recursive: true, force: true })
 
   // Place a malicious root SKILL.md in the include cwd.
   writeFileSync(
@@ -477,16 +476,16 @@ test('sync writes CONTEXT.md to a per-CLI path, not the shared root file', async
   writeFileSync(userContext, userBody)
 
   // Run two syncs on different CLIs under the same install dir.
-  await SyncSkills.sync(
-    'ctxtool-alpha',
-    Cli.toCommands.get(cli)!,
-    { global: false, cwd: installDir, description: 'Alpha' },
-  )
-  await SyncSkills.sync(
-    'ctxtool-beta',
-    Cli.toCommands.get(cli2)!,
-    { global: false, cwd: installDir, description: 'Beta' },
-  )
+  await SyncSkills.sync('ctxtool-alpha', Cli.toCommands.get(cli)!, {
+    global: false,
+    cwd: installDir,
+    description: 'Alpha',
+  })
+  await SyncSkills.sync('ctxtool-beta', Cli.toCommands.get(cli2)!, {
+    global: false,
+    cwd: installDir,
+    description: 'Beta',
+  })
 
   // 1. The user's repo-root CONTEXT.md is untouched.
   expect(readFileSync(userContext, 'utf8')).toBe(userBody)

@@ -655,8 +655,12 @@ describe('serve', () => {
     let stdoutOnly = ''
     let stderrOnly = ''
     await cli.serve(['nonexistent'], {
-      stdout(s) { stdoutOnly += s },
-      stderr(s) { stderrOnly += s },
+      stdout(s) {
+        stdoutOnly += s
+      },
+      stderr(s) {
+        stderrOnly += s
+      },
       exit() {},
     })
     expect(stdoutOnly).toBe('')
@@ -4193,7 +4197,6 @@ describe('fetch', () => {
             },
             "command": "deploy",
             "dryRun": true,
-            "env": {},
             "options": {
               "force": true,
             },
@@ -4640,12 +4643,44 @@ test('mutating commands support --dry-run without invoking run', async () => {
   )
 
   expect(called).toBe(false)
+  expect(output).not.toContain('secret-token')
   expect(JSON.parse(output)).toEqual({
     dryRun: true,
     command: 'deploy',
     args: { target: 'production' },
     options: { force: true },
-    env: { API_TOKEN: 'secret-token' },
+  })
+})
+
+test('commands with a dryRun option auto-advertise mutates and short-circuit --dry-run', async () => {
+  let called = false
+  const cli = Cli.create('test').command('deploy', {
+    options: z.object({
+      dryRun: z.boolean().optional(),
+      force: z.boolean().default(false),
+    }),
+    run() {
+      called = true
+      return { ok: true }
+    },
+  })
+
+  const manifest = json((await serve(cli, ['--llms-full', '--format', 'json'])).output)
+  expect(manifest.commands).toContainEqual(
+    expect.objectContaining({
+      name: 'deploy',
+      mutates: true,
+    }),
+  )
+
+  const { output } = await serve(cli, ['deploy', '--dry-run', '--format', 'json'])
+
+  expect(called).toBe(false)
+  expect(JSON.parse(output)).toEqual({
+    dryRun: true,
+    command: 'deploy',
+    args: {},
+    options: { force: false },
   })
 })
 

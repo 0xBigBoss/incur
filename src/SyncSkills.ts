@@ -125,7 +125,7 @@ export async function sync(
           const nameMatch = content.match(/^name:[^\S\n]*(.*)$/m)
           const skillName =
             pattern === '_root'
-              ? (nameMatch?.[1]?.trim() || name)
+              ? nameMatch?.[1]?.trim() || name
               : path.basename(path.dirname(match))
           // For non-`_root` patterns the directory basename is structurally
           // safe (no separators by construction). The `_root` case takes
@@ -149,9 +149,7 @@ export async function sync(
           // cleanup boundary.
           const destResolved = path.resolve(dest)
           if (!destResolved.startsWith(tmpDirResolved + path.sep))
-            throw new Error(
-              `sync.include: skill name ${JSON.stringify(skillName)} escapes tmp dir`,
-            )
+            throw new Error(`sync.include: skill name ${JSON.stringify(skillName)} escapes tmp dir`)
           try {
             await fs.mkdir(path.dirname(dest), { recursive: true })
             await fs.writeFile(dest, content)
@@ -355,7 +353,9 @@ function collectEntries(
  * write time. Used by the staleness check in `Cli.serve` so the read side
  * walks the same directory as the install side.
  */
-export function resolveIncludeCwd(options: { cwd?: string | undefined; global?: boolean | undefined } = {}): string {
+export function resolveIncludeCwd(
+  options: { cwd?: string | undefined; global?: boolean | undefined } = {},
+): string {
   const global = options.global !== false
   return options.cwd ?? (global ? resolvePackageRoot() : process.cwd())
 }
@@ -456,6 +456,8 @@ export function readIncludeCwd(name: string): string | undefined {
  * in place so a user who had content there doesn't silently lose it.
  */
 function resolveContextPath(options: { cwd: string; global: boolean; name: string }): string {
-  const base = options.global ? path.join(os.homedir(), '.agents') : path.join(options.cwd, '.agents')
+  const base = options.global
+    ? path.join(os.homedir(), '.agents')
+    : path.join(options.cwd, '.agents')
   return path.join(base, 'contexts', `${options.name}.md`)
 }

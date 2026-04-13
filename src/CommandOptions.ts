@@ -58,14 +58,17 @@ export function resolveCommandOptions(
   command: CommandOptionsSource,
   parsed: Record<string, unknown>,
 ) {
+  const effectiveOpts = getEffectiveOptionsSchema(command)
+  const hasDryRun = effectiveOpts ? 'dryRun' in effectiveOpts.shape : false
+  const mutatesEffective = command.mutates || hasDryRun
   const control = {
-    dryRun: command.mutates ? parsed.dryRun === true : false,
+    dryRun: mutatesEffective ? parsed.dryRun === true : false,
     json: typeof parsed.json === 'string' ? parsed.json : undefined,
     pageSize: typeof parsed.pageSize === 'number' ? parsed.pageSize : undefined,
   }
 
   const options = { ...parsed }
-  if (command.mutates) delete options.dryRun
+  if (mutatesEffective) delete options.dryRun
   if (getPayloadSchema(command)) delete options.json
 
   const payloadSchema = getPayloadSchema(command)

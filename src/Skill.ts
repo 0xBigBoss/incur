@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { z } from 'zod'
 
+import { toKebab } from './internal/helpers.js'
 import * as Schema from './Schema.js'
 
 /** Information about a single command, passed to `generate()`. */
@@ -222,7 +223,7 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
       const def = prop?.default !== undefined ? String(prop.default) : ''
       const rawDesc = field.description ?? ''
       const desc = prop?.deprecated ? `**Deprecated.** ${rawDesc}` : rawDesc
-      return `| \`--${key}\` | \`${type}\` | ${def ? `\`${def}\`` : ''} | ${desc} |`
+      return `| \`--${toKebab(key)}\` | \`${type}\` | ${def ? `\`${def}\`` : ''} | ${desc} |`
     })
     sections.push(
       `${sub} Options\n\n| Flag | Type | Default | Description |\n|------|------|---------|-------------|\n${rows.join('\n')}`,

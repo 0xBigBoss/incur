@@ -200,7 +200,9 @@ describe('generateCommands', () => {
                 },
               },
             },
-            responses: { '200': { description: 'ok', content: { 'application/json': { schema: {} } } } },
+            responses: {
+              '200': { description: 'ok', content: { 'application/json': { schema: {} } } },
+            },
           },
         },
       },
@@ -257,14 +259,7 @@ describe('generateCommands', () => {
     // the payload against the full body schema and rejects before the
     // handler runs. Fetch is not called.
     capturedBody = undefined
-    const missingJson = await serve(cli, [
-      'api',
-      'createUser',
-      '--json',
-      '{}',
-      '--format',
-      'json',
-    ])
+    const missingJson = await serve(cli, ['api', 'createUser', '--json', '{}', '--format', 'json'])
     expect(missingJson.exitCode).toBe(1)
     expect(capturedBody).toBeUndefined()
     expect(missingJson.output).toContain('VALIDATION_ERROR')
@@ -277,14 +272,7 @@ describe('generateCommands', () => {
     // field. This is the path my handler validation specifically
     // covers — it's unreachable via --json.
     capturedBody = undefined
-    const missingBody = await serve(cli, [
-      'api',
-      'createUser',
-      '--body',
-      '{}',
-      '--format',
-      'json',
-    ])
+    const missingBody = await serve(cli, ['api', 'createUser', '--body', '{}', '--format', 'json'])
     expect(missingBody.exitCode).toBe(1)
     expect(capturedBody).toBeUndefined()
     expect(missingBody.output).toContain('missing required body fields')
@@ -292,14 +280,7 @@ describe('generateCommands', () => {
 
     // Flattened --<prop> path still works for the common case.
     capturedBody = undefined
-    const flat = await serve(cli, [
-      'api',
-      'createUser',
-      '--name',
-      'Alice',
-      '--format',
-      'json',
-    ])
+    const flat = await serve(cli, ['api', 'createUser', '--name', 'Alice', '--format', 'json'])
     expect(flat.exitCode).toBeUndefined()
     expect(capturedBody).toBe('{"name":"Alice"}')
   })

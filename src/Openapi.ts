@@ -87,7 +87,7 @@ export async function generateCommands(
       const bodyIsObject =
         !!bodySchema && typeof bodySchema === 'object' && (bodySchema as any).type === 'object'
       const bodyProps = bodyIsObject
-        ? ((bodySchema as any).properties ?? {}) as Record<string, Record<string, unknown>>
+        ? (((bodySchema as any).properties ?? {}) as Record<string, Record<string, unknown>>)
         : ({} as Record<string, Record<string, unknown>>)
       const bodyRequired = bodyIsObject
         ? new Set(((bodySchema as any).required as string[] | undefined) ?? [])
@@ -163,8 +163,7 @@ export async function generateCommands(
       // before. For non-object bodies, `resolveCommandOptions()` routes
       // the parsed JSON to `options.body` (rather than spreading), and
       // the handler below picks it up.
-      const bodyZod =
-        bodySchema && typeof bodySchema === 'object' ? toZod(bodySchema) : undefined
+      const bodyZod = bodySchema && typeof bodySchema === 'object' ? toZod(bodySchema) : undefined
       const outputSchema =
         responseSchema && typeof responseSchema === 'object' ? toZod(responseSchema) : undefined
 

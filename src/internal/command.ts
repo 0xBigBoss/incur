@@ -123,7 +123,6 @@ export async function execute(command: any, options: execute.Options): Promise<e
           command: path,
           args,
           options: resolvedOptions,
-          env: commandEnv,
         },
       }
       resolveResultReady!()

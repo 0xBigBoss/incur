@@ -92,10 +92,7 @@ export type Cli<
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Mounts a generated plugin as a command group with async loading. */
-  plugin<const name extends string>(
-    name: name,
-    plugin: Plugin<any, any>,
-  ): Cli<commands, vars, env>
+  plugin<const name extends string>(name: name, plugin: Plugin<any, any>): Cli<commands, vars, env>
   /** Registers middleware that runs around every command. */
   use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
@@ -274,7 +271,12 @@ export function create(
           await Promise.all(pending)
         } catch (err) {
           const code = err instanceof IncurError ? err.code : 'PLUGIN_RESOLUTION_FAILED'
-          const message = err instanceof IncurError ? err.shortMessage : (err instanceof Error ? err.message : String(err))
+          const message =
+            err instanceof IncurError
+              ? err.shortMessage
+              : err instanceof Error
+                ? err.message
+                : String(err)
           return new Response(JSON.stringify({ ok: false, error: { code, message } }), {
             status: 500,
             headers: { 'content-type': 'application/json' },
@@ -301,7 +303,12 @@ export function create(
           // Surface plugin resolution failures as structured errors before serving.
           const code = err instanceof IncurError ? err.code : 'PLUGIN_RESOLUTION_FAILED'
           // Use shortMessage to avoid the "Details: ..." suffix that BaseError appends.
-          const message = err instanceof IncurError ? err.shortMessage : (err instanceof Error ? err.message : String(err))
+          const message =
+            err instanceof IncurError
+              ? err.shortMessage
+              : err instanceof Error
+                ? err.message
+                : String(err)
           const stderrFn = serveOptions.stderr ?? ((s: string) => process.stderr.write(s))
           const exit = serveOptions.exit ?? ((code: number) => process.exit(code))
           const { format: formatFlag, formatExplicit } = extractBuiltinFlags(argv)
@@ -336,7 +343,9 @@ export function create(
         (async () => {
           let sub: Cli
           try {
-            const config = plugin.config ? (plugin.config as z.ZodObject<any>).parse(plugin.options ?? {}) : undefined
+            const config = plugin.config
+              ? (plugin.config as z.ZodObject<any>).parse(plugin.options ?? {})
+              : undefined
             const resolved = await plugin.resolve({
               cwd: process.cwd(),
               config,
@@ -1602,14 +1611,18 @@ async function serveImpl(
   if (result.ok) {
     // Apply output sanitization (prompt-injection scan + custom sanitize hook).
     // Warnings are merged into the data as `_warnings` so agents see them inline.
-    const sanitized = await Sanitize.sanitize(result.data, { agent: !human, command: path }, options.sanitize)
+    const sanitized = await Sanitize.sanitize(
+      result.data,
+      { agent: !human, command: path },
+      options.sanitize,
+    )
     if (sanitized.blocked) {
       write({
         ok: false,
         error: {
           code: 'SANITIZED_OUTPUT_BLOCKED',
           message: 'Command output was blocked by sanitization',
-          ...(sanitized.warnings ? { warnings: sanitized.warnings } as any : undefined),
+          ...(sanitized.warnings ? ({ warnings: sanitized.warnings } as any) : undefined),
         },
         meta: { command: path, duration },
       })
@@ -1618,7 +1631,11 @@ async function serveImpl(
     }
     // Merge warnings into data so they're visible to agents without a wrapper envelope
     const dataWithWarnings =
-      sanitized.warnings?.length && sanitized.output !== null && sanitized.output !== undefined && typeof sanitized.output === 'object' && !Array.isArray(sanitized.output)
+      sanitized.warnings?.length &&
+      sanitized.output !== null &&
+      sanitized.output !== undefined &&
+      typeof sanitized.output === 'object' &&
+      !Array.isArray(sanitized.output)
         ? { ...(sanitized.output as Record<string, unknown>), _warnings: sanitized.warnings }
         : sanitized.output
     const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
@@ -2059,7 +2076,11 @@ async function executeCommand(
   }
 
   // Apply output sanitization before returning the successful response.
-  const sanitized = await Sanitize.sanitize(result.data, { agent: true, command: path }, options.sanitize)
+  const sanitized = await Sanitize.sanitize(
+    result.data,
+    { agent: true, command: path },
+    options.sanitize,
+  )
   if (sanitized.blocked) {
     const cta = formatCtaBlock(options.name ?? path, result.cta as CtaBlock | undefined)
     return jsonResponse(
@@ -2989,17 +3010,20 @@ function collectCommands(
     } else if (isGroup(entry)) {
       result.push(...collectCommands(entry.commands, path))
     } else {
+      const effectiveOpts = getCommandOptionsSchema(entry)
+      const hasDryRun = effectiveOpts ? 'dryRun' in effectiveOpts.shape : false
       const cmd: (typeof result)[number] = { name: path.join(' ') }
       if (entry.description) cmd.description = entry.description
-      if (entry.mutates) cmd.mutates = entry.mutates
+      if (entry.mutates || hasDryRun) cmd.mutates = true
       if (entry.destructive) cmd.destructive = entry.destructive
 
       // Use effective options (user-defined + framework-injected dryRun/json/pageSize)
-      const effectiveOpts = getCommandOptionsSchema(entry)
       const inputSchema = buildInputSchema(entry.args, entry.env, effectiveOpts)
       const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined
       const bodySchema = (entry as any).body ? Schema.toJsonSchema((entry as any).body) : undefined
-      const fullInputSchema = (entry as any).input ? Schema.toJsonSchema((entry as any).input) : undefined
+      const fullInputSchema = (entry as any).input
+        ? Schema.toJsonSchema((entry as any).input)
+        : undefined
       if (inputSchema || outputSchema || bodySchema || fullInputSchema) {
         cmd.schema = {}
         if (inputSchema?.args) cmd.schema.args = inputSchema.args
