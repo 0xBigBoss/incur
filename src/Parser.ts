@@ -23,10 +23,20 @@ export function parse<
     const token = argv[i]!
 
     if (token.startsWith('--no-') && token.length > 5) {
-      // --no-flag negation
-      const name = normalizeOptionName(token.slice(5), optionNames)
-      if (!name) throw new ParseError({ message: `Unknown flag: ${token}` })
-      rawArgvOptions[name] = false
+      // --no-<x>: prefer negating a registered <x> boolean (long-standing
+      // shortcut), but fall back to treating the flag as a literal
+      // `no<X>` field when no base <x> is registered. This lets schemas
+      // declare fields like `noConnect: z.boolean()` and have `--no-connect`
+      // set them to true, matching how `--help` already renders them.
+      const rest = token.slice(5)
+      const negationTarget = normalizeOptionName(rest, optionNames)
+      if (negationTarget) {
+        rawArgvOptions[negationTarget] = false
+      } else {
+        const literalTarget = normalizeOptionName(`no-${rest}`, optionNames)
+        if (!literalTarget) throw new ParseError({ message: `Unknown flag: ${token}` })
+        rawArgvOptions[literalTarget] = true
+      }
       i++
     } else if (token.startsWith('--')) {
       const eqIdx = token.indexOf('=')
