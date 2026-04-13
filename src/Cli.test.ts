@@ -4652,19 +4652,22 @@ test('mutating commands support --dry-run without invoking run', async () => {
   })
 })
 
-test('commands with a dryRun option auto-advertise mutates and short-circuit --dry-run', async () => {
+test('commands with a user-declared dryRun option auto-advertise mutates in the manifest but keep runtime control in the handler', async () => {
   let called = false
+  let seenDryRun: unknown
   const cli = Cli.create('test').command('deploy', {
     options: z.object({
       dryRun: z.boolean().optional(),
       force: z.boolean().default(false),
     }),
-    run() {
+    run(c) {
       called = true
-      return { ok: true }
+      seenDryRun = (c.options as { dryRun?: boolean }).dryRun
+      return c.ok({ plan: 'custom' })
     },
   })
 
+  // The manifest auto-advertises mutates so agents know --dry-run is supported.
   const manifest = json((await serve(cli, ['--llms-full', '--format', 'json'])).output)
   expect(manifest.commands).toContainEqual(
     expect.objectContaining({
@@ -4673,15 +4676,13 @@ test('commands with a dryRun option auto-advertise mutates and short-circuit --d
     }),
   )
 
-  const { output } = await serve(cli, ['deploy', '--dry-run', '--format', 'json'])
-
-  expect(called).toBe(false)
-  expect(JSON.parse(output)).toEqual({
-    dryRun: true,
-    command: 'deploy',
-    args: {},
-    options: { force: false },
-  })
+  // But because `mutates: true` was NOT explicitly declared, the framework does
+  // not short-circuit; the handler still runs and observes its own `dryRun` option.
+  // This preserves the pattern where commands return custom dry-run plans from
+  // their own handler rather than the generic framework envelope.
+  await serve(cli, ['deploy', '--dry-run', '--format', 'json'])
+  expect(called).toBe(true)
+  expect(seenDryRun).toBe(true)
 })
 
 test('run context includes dryRun during normal execution', async () => {
