@@ -92,14 +92,25 @@ export async function sync(
   try {
     const skills: sync.Skill[] = []
     for (const file of files) {
+      const nameMatch = file.content.match(/^name:\s*(.+)$/m)
+      const descMatch = file.content.match(/^description:\s*(.+)$/m)
+      // Stage under the frontmatter name, not `file.dir`, so a later
+      // `include` or `skills` entry with the same skill name overwrites
+      // this file in place. `Skill.split` emits `dir = bucket key` (e.g.
+      // `auth`) while the frontmatter slug is `<cli>-<bucket>` (e.g.
+      // `devctl-auth`), so without this normalization the two sources
+      // land at `tmpDir/auth/SKILL.md` and `tmpDir/devctl-auth/SKILL.md`
+      // respectively, and `Agents.install()`'s `discoverSkills` walk
+      // picks up both as duplicate entries with the same frontmatter
+      // name — producing a double path in the install result and a
+      // mismatched description in the progress display.
+      const skillName = nameMatch?.[1]?.trim() || file.dir || name
       const filePath = file.dir
-        ? path.join(tmpDir, file.dir, 'SKILL.md')
+        ? path.join(tmpDir, skillName, 'SKILL.md')
         : path.join(tmpDir, 'SKILL.md')
       await fs.mkdir(path.dirname(filePath), { recursive: true })
       await fs.writeFile(filePath, `${file.content}\n`)
-      const nameMatch = file.content.match(/^name:\s*(.+)$/m)
-      const descMatch = file.content.match(/^description:\s*(.+)$/m)
-      skills.push({ name: nameMatch?.[1] ?? (file.dir || name), description: descMatch?.[1] })
+      skills.push({ name: skillName, description: descMatch?.[1] })
     }
 
     const context = Skill.generateContext(name, entries, contextRules)
@@ -153,10 +164,21 @@ export async function sync(
           try {
             await fs.mkdir(path.dirname(dest), { recursive: true })
             await fs.writeFile(dest, content)
-            if (!skills.some((s) => s.name === skillName)) {
-              const descMatch = content.match(/^description:[^\S\n]*(.*)$/m)
-              skills.push({ name: skillName, description: descMatch?.[1]?.trim(), external: true })
+            // Include is an *override*, not a fallback: when it finds a
+            // skill name already tracked (from the command generator),
+            // replace the tracking entry in place so the returned
+            // `skills` metadata — and therefore the `skills add` progress
+            // display — reflects the hand-authored description, not the
+            // command-generated one that would otherwise linger.
+            const descMatch = content.match(/^description:[^\S\n]*(.*)$/m)
+            const entry: sync.Skill = {
+              name: skillName,
+              description: descMatch?.[1]?.trim(),
+              external: true,
             }
+            const existingIdx = skills.findIndex((s) => s.name === skillName)
+            if (existingIdx >= 0) skills[existingIdx] = entry
+            else skills.push(entry)
           } catch {}
         }
       }

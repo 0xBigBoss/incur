@@ -201,6 +201,61 @@ description: Stale baked content.
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('sync.include overrides a command-generated skill with the same frontmatter name', async () => {
+  // Regression for the devctl-auth display bug: when a subcommand group
+  // (`auth login`, `auth status`) produces a command-generated skill
+  // named `<cli>-auth`, and sync.include also finds a hand-authored
+  // `skills/<cli>-auth/SKILL.md`, the include must fully replace the
+  // command-generated entry — both on disk and in the returned skills
+  // metadata. Before the fix, `Skill.split` wrote the command-generated
+  // file to `tmpDir/auth/SKILL.md` (bucket key) while include wrote to
+  // `tmpDir/<cli>-auth/SKILL.md` (frontmatter name), so `discoverSkills`
+  // returned two entries with the same sanitized name and `Agents.install`
+  // emitted a duplicate path. The tracking array also held stale
+  // command-generated metadata because the include loop short-circuited
+  // on `skills.some(...)`.
+  const tmp = join(tmpdir(), `clac-include-override-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('devctl', { description: 'Test harness CLI' })
+  cli.command('auth login', { description: 'Log in', run: () => ({}) })
+  cli.command('auth logout', { description: 'Log out', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  const skillDir = join(installDir, 'skills', 'devctl-auth')
+  mkdirSync(skillDir, { recursive: true })
+  const handAuthored = `---
+name: devctl-auth
+description: Hand-authored onboarding walkthrough — wins over command gen.
+---
+
+# Onboarding
+`
+  writeFileSync(join(skillDir, 'SKILL.md'), handAuthored)
+
+  const result = await SyncSkills.sync('devctl', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['skills/*'],
+  })
+
+  const authEntries = result.skills.filter((s) => s.name === 'devctl-auth')
+  expect(authEntries).toHaveLength(1)
+  expect(authEntries[0]?.description).toBe(
+    'Hand-authored onboarding walkthrough — wins over command gen.',
+  )
+  expect(authEntries[0]?.external).toBe(true)
+
+  const authPaths = result.paths.filter((p) => p.endsWith('devctl-auth'))
+  expect(authPaths).toHaveLength(1)
+  expect(readFileSync(join(authPaths[0]!, 'SKILL.md'), 'utf8')).toBe(handAuthored)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('sync.skills rejects path-traversal names instead of writing outside tmpDir', async () => {
   // The downstream `Agents.install()` discovery loop sanitizes skill names,
   // but only after files have already been written to disk. An unsanitized
