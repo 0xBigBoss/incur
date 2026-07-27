@@ -3401,6 +3401,44 @@ describe('built-in commands', () => {
     expect(output).toContain('--no-global')
   })
 
+  test('skills add prints the sync body before the suggestions', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: {
+          body: 'Steps to finish:\n  1. Authorize the app\n  2. Add the line to AGENTS.md',
+          cwd: tmp,
+          suggestions: ['do the thing'],
+        },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global'])
+
+      // Verbatim: the CLI owns the wording, including any heading.
+      expect(output).toContain('Steps to finish:\n  1. Authorize the app')
+      expect(output).toContain('2. Add the line to AGENTS.md')
+      expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
+  test('skills add carries the sync body in the structured output', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-json-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: { body: 'Authorize the app', cwd: tmp },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
+
+      expect(output).toContain('"body"')
+      expect(output).toContain('Authorize the app')
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
   test('skills list --help shows description', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })

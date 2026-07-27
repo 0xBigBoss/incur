@@ -609,6 +609,8 @@ export declare namespace create {
     /** Options for the built-in `skills add` command. */
     sync?:
       | {
+          /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
+          body?: string | undefined
           /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
           cwd?: string | undefined
           /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -1022,6 +1024,12 @@ async function serveImpl(
       }
       lines.push('')
       lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`)
+      // Before the suggestions: whatever is left to do is what makes the suggestions work.
+      const body = options.sync?.body
+      if (body) {
+        lines.push('')
+        lines.push(body)
+      }
       const suggestions = options.sync?.suggestions
       if (suggestions && suggestions.length > 0) {
         lines.push('')
@@ -1033,6 +1041,7 @@ async function serveImpl(
       writeln(lines.join('\n'))
       if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
+        if (body) output.body = body
         if (fullOutput && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
       }
@@ -2516,6 +2525,7 @@ declare namespace serveImpl {
     rootFetch?: FetchHandler | undefined
     sync?:
       | {
+          body?: string | undefined
           cwd?: string | undefined
           depth?: number | undefined
           include?: string[] | undefined
