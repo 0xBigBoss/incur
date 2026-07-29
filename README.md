@@ -887,7 +887,7 @@ jobs:
 After the release is published, users can install without a package manager:
 
 ```sh
-curl -fsSL https://github.com/example/my-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/<org>/<repo>/releases/latest/download/install.sh | sh
 ```
 
 Connect those assets to a public GitHub repository:
