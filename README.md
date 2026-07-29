@@ -858,10 +858,10 @@ $ my-cli whoami
 Build standalone macOS, Linux, and Windows executables with Bun:
 
 ```sh
-pnpm exec incur build ./src/bin.ts --installer
+incur build ./src/bin.ts --installer
 ```
 
-The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell and PowerShell installation scripts.
+The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell installation scripts.
 
 Copy this workflow to `.github/workflows/binary-release.yml` to prepare a release and upload its unsigned binaries:
 
@@ -883,8 +883,6 @@ jobs:
       - id: release
         uses: wevm/incur/release@v1
 ```
-
-The action defaults to `./src/bin.ts`, reads the name and version from `package.json`, creates or reuses the matching release, uploads verified assets, and publishes it as the latest release. Set `publish: false` for a draft-first workflow. Run it only with trusted source and locked dependencies because release preparation, build, and publication share the job's write permission.
 
 After the release is published, users can install without a package manager:
 
