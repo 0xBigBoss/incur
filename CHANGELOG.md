@@ -1,5 +1,50 @@
 # incur
 
+## 0.5.1
+
+### Patch Changes
+
+- b2d19b2: Pin `@modelcontextprotocol/server` to an exact version instead of a caret range
+  over a prerelease.
+
+  The dependency was declared as `^2.0.0-alpha.2` — a caret range on a
+  prerelease, which permits resolution to drift across _any_ 2.x prerelease. It
+  landed on `2.0.0-beta.5`, which no longer exports `StdioServerTransport`, so
+  `src/Mcp.ts` failed at import with:
+
+  ```
+  SyntaxError: Export named 'StdioServerTransport' not found in module
+    @modelcontextprotocol/server@2.0.0-beta.5
+  ```
+
+  Every consumer's test suite broke on module load, not just MCP usage.
+
+  Widening to `^2.0.0` would not have fixed it. Stable `2.0.0` does not keep
+  `StdioServerTransport` on the package root either — it relocated the symbol
+  behind a `./stdio` subpath, leaving only `McpServer` on the root — so the
+  import would still have thrown, just for a different reason.
+
+  The range itself is the defect, so this pins `2.0.0-alpha.2` exactly: the one
+  version whose export shape matches what `src/Mcp.ts` imports. No range means
+  no drift.
+
+- b2d19b2: Isolate skills metadata from the developer's home in the test suite.
+
+  `hashPath()` falls back to `~/.local/share` when `XDG_DATA_HOME` is unset, and
+  isolation in `SyncSkills.test.ts` was opt-in — most tests set it, several did
+  not. Every test that forgot wrote a real metadata file into the developer's
+  home, named after the CLI it constructed.
+
+  One fixture builds a CLI named `devctl`, records an `includeCwd` pointing at a
+  temp dir, then deletes that dir — leaving a real
+  `~/.local/share/incur/devctl.json` referencing a path that no longer exists.
+  Any machine that ran the suite then broke the actual `devctl` CLI, which reads
+  that file at startup.
+
+  Isolation is now default-on via `beforeEach`, with a guard test that omits
+  `XDG_DATA_HOME` and asserts the write stays contained. Test-only change; no
+  runtime behaviour differs for consumers.
+
 ## 0.5.0
 
 ### Minor Changes
