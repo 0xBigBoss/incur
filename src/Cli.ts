@@ -2195,6 +2195,21 @@ declare namespace fetchImpl {
   }
 }
 
+/**
+ * @internal Renders MCP server startup failures as JSON rather than throwing
+ * out of `fetch()`. Tool-name collisions are configuration errors that surface
+ * only once the tool set is collected, so the first `/mcp` request is where a
+ * host learns about them.
+ */
+function startupErrorResponse(err: unknown) {
+  const code = err instanceof IncurError ? err.code : 'UNKNOWN'
+  const message = err instanceof Error ? err.message : String(err)
+  return new Response(JSON.stringify({ ok: false, error: { code, message } }), {
+    status: 500,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
 function createMcpHttpHandler(
   name: string,
@@ -2266,14 +2281,26 @@ function createMcpHttpHandler(
         session = undefined
         throw error
       })
-      return (await session).transport.handleRequest(req)
+      let started: Awaited<typeof session>
+      try {
+        started = await session
+      } catch (err) {
+        return startupErrorResponse(err)
+      }
+      return started.transport.handleRequest(req)
     }
 
     const abortReason = () =>
       req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
     if (req.signal.aborted) throw abortReason()
 
-    const { server, transport } = await createServer(commands, mcpOptions, true)
+    let started: Awaited<ReturnType<typeof createServer>>
+    try {
+      started = await createServer(commands, mcpOptions, true)
+    } catch (err) {
+      return startupErrorResponse(err)
+    }
+    const { server, transport } = started
     let closing: Promise<void> | undefined
     const close = () => (closing ??= server.close())
     // Transport closure does not settle `handleRequest`; reject the public fetch separately.
@@ -2510,6 +2537,9 @@ async function fetchImpl(
           error: (() => undefined) as any,
           format: 'json' as any,
           formatExplicit: true,
+          // Gateway entries are exempt from CLI-level globals (see
+          // assertNoGlobalOptionConflicts), so there is nothing to parse here.
+          globals: {},
           name: options.name ?? name,
           set: (() => undefined) as any,
           var: {},
